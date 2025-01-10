@@ -13,7 +13,6 @@ const twilioClient = twilio(
   process.env.TWILIO_AUTH_TOKEN
 );
 
-// Mark this route as dynamic
 export const dynamic = "force-dynamic";
 
 async function sendWhatsAppMessage(to: string, body: string) {
@@ -34,26 +33,43 @@ async function sendWhatsAppMessage(to: string, body: string) {
   }
 }
 
+const HELP_MESSAGE = `👋 Hi! I can help you set reminders. Here are some examples:
+
+With specific tasks:
+✅ "Remind me to call John in 5 minutes"
+✅ "Remind me to take medicine at 2:30 pm"
+✅ "Daily reminder to drink water at 10am"
+
+Without specific tasks:
+✅ "Set a reminder at 2:30 pm"
+✅ "Set a reminder in 5 minutes"
+✅ "Daily reminder at 9am"
+
+You can use these time formats:
+• in X minutes/hours
+• at HH:MM (24-hour)
+• at H:MM am/pm (12-hour)
+• tomorrow at H:MM
+• daily/weekly at H:MM`;
+
 export async function POST(req: Request) {
   try {
-    // Log incoming request
-    console.log("Received Twilio webhook request");
+    console.log("Received webhook request");
 
-    let message: string = "";
+    let messageBody: string = "";
     let from: string = "";
 
+    // Check content type and parse accordingly
     const contentType = req.headers.get("content-type");
+    console.log("Content-Type:", contentType);
 
     if (contentType?.includes("application/json")) {
-      const body = await req.json();
-      message = body.Body || "";
-      from = (body.From || "").replace("whatsapp:", "");
-    } else if (
-      contentType?.includes("application/x-www-form-urlencoded") ||
-      contentType?.includes("multipart/form-data")
-    ) {
+      const data = await req.json();
+      messageBody = data.Body || "";
+      from = (data.From || "").replace("whatsapp:", "");
+    } else if (contentType?.includes("application/x-www-form-urlencoded")) {
       const formData = await req.formData();
-      message = formData.get("Body")?.toString() || "";
+      messageBody = formData.get("Body")?.toString() || "";
       from = (formData.get("From")?.toString() || "").replace("whatsapp:", "");
     } else {
       console.error("Unsupported content type:", contentType);
@@ -63,224 +79,212 @@ export async function POST(req: Request) {
       );
     }
 
-    console.log("Message received:", { from, message, contentType });
+    console.log("Parsed message:", { messageBody, from });
 
-    if (!message || !from) {
-      console.error("Missing required fields:", { message, from });
+    if (!messageBody || !from) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 }
       );
     }
 
+    messageBody = messageBody.toLowerCase();
+
     // Store the incoming message
     await prisma.contentItem.create({
       data: {
         type: "incoming_message",
-        content: message,
+        content: messageBody,
         user_id: from,
       },
     });
 
     // Process the message with Gemini
-    const prompt = `You are MindlyQ, a WhatsApp bot that helps users manage reminders and organize content. 
-    Analyze the following user message and categorize it appropriately.
+    const prompt = `
+      You are a helpful AI assistant processing WhatsApp messages for a reminder app.
+      Analyze this message: "${messageBody}"
 
-    IMPORTANT: You must respond ONLY with a valid JSON object, nothing else.
-    
-    The JSON must follow this format for reminders:
-    {
-      "type": "reminder",
-      "title": "brief descriptive title",
-      "description": "full message content",
-      "original_message": "exact user message"
-    }
+      Rules for reminder detection:
+      1. Message must include a time
+      2. Task is optional - if no specific task is mentioned, it's still a valid reminder
+      3. Time must be in one of these formats:
+         - Relative: "in X minutes/hours/days"
+         - Today: "at HH:MM" or "at H:MM am/pm"
+         - Tomorrow: "tomorrow at HH:MM" or "tomorrow at H:MM am/pm"
+         - Specific date: "on DD/MM at HH:MM" or "on DD/MM/YYYY at HH:MM"
+         - Recurring: "daily/weekly at HH:MM" or "every day/week at H:MM am/pm"
 
-    For content:
-    {
-      "type": "content",
-      "title": "brief title",
-      "description": "detailed description",
-      "contentType": "url|text|image",
-      "content": "actual content"
-    }
+      If it's a reminder request, extract:
+      1. Title (the task/action if specified, or "Reminder" if no specific task)
+      2. Description (any additional details)
+      3. Time (the exact time/date mentioned)
+      4. Recurrence (daily/weekly if mentioned)
+      
+      IMPORTANT: Return ONLY the JSON object, without any markdown formatting or code blocks.
+      
+      Format:
+      {
+        "isReminder": boolean,
+        "title": string (the task/action if specified, or "⏰ Reminder" if no specific task),
+        "description": string or null,
+        "time": string (the exact time mentioned, e.g., "in 5 minutes", "at 14:30", "tomorrow at 2:30 pm"),
+        "recurrence": string or null (only "daily" or "weekly")
+      }
+      
+      Mark isReminder as true if:
+      1. The message contains a specific time in one of the supported formats
+      2. The message is clearly about setting a reminder (even without a specific task)
 
-    For queries:
-    {
-      "type": "query"
-    }
-
-    Example responses:
-    1. For "Remind me to call John tomorrow at 2pm":
-    {
-      "type": "reminder",
-      "title": "Call John",
-      "description": "Phone call with John tomorrow at 2pm",
-      "original_message": "Remind me to call John tomorrow at 2pm"
-    }
-
-    2. For "remind me everyday to go for a walk at 5 AM":
-    {
-      "type": "reminder",
-      "title": "Daily Walk",
-      "description": "Go for a walk",
-      "original_message": "remind me everyday to go for a walk at 5 AM"
-    }
-
-    User message: "${message}"`;
+      Example valid reminders:
+      - "Remind me to call John in 5 minutes" -> title: "call John"
+      - "Set a reminder at 2:30 pm" -> title: "⏰ Reminder"
+      - "Daily reminder at 10am" -> title: "⏰ Daily Reminder"
+      - "Set a reminder today at 4:37 PM" -> title: "⏰ Reminder"
+      
+      Example invalid reminders:
+      - "Set a reminder" (missing time)
+      - "Remind me tomorrow" (missing specific time)
+      - "Hello" (not a reminder request)
+    `;
 
     const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const aiResponse = response.text().trim();
-    console.log("Gemini Response:", aiResponse);
+    const response = result.response;
+    const text = response.text();
+    console.log("Raw Gemini response:", text);
 
-    let parsedResponse;
     try {
-      // Remove any markdown code block markers if present
-      const cleanJson = aiResponse.replace(/```json\n?|\n?```/g, "").trim();
-      parsedResponse = JSON.parse(cleanJson);
-    } catch (e) {
-      console.error(
-        "Failed to parse Gemini response:",
-        e,
-        "Raw response:",
-        aiResponse
-      );
-      parsedResponse = {
-        type: "error",
-        message: "I had trouble understanding that. Could you please rephrase?",
-      };
-    }
+      // Clean up the response by removing markdown code blocks and any extra whitespace
+      const cleanedText = text
+        .replace(/```json\n?/g, '')  // Remove ```json
+        .replace(/```\n?/g, '')      // Remove closing ```
+        .trim();                     // Remove extra whitespace
+      
+      console.log("Cleaned response:", cleanedText);
+      const parsed = JSON.parse(cleanedText);
 
-    // Handle different types of requests
-    let responseMessage = "";
-
-    switch (parsedResponse.type) {
-      case "reminder": {
-        // Parse the reminder time from the original message
-        const reminderTime = parseReminderTime(parsedResponse.original_message);
-        console.log("Parsed reminder time:", reminderTime);
-
-        if (reminderTime.needs_time_clarification) {
-          responseMessage = "What time would you like to set this reminder for?";
-          break;
+      if (parsed.isReminder && parsed.time) {
+        const parsedTime = parseReminderTime(parsed.time);
+        
+        if (!parsedTime) {
+          await sendWhatsAppMessage(
+            from,
+            "I couldn't understand the time format. Please try using one of these formats:\n" +
+            "• in X minutes (e.g., in 5 minutes)\n" +
+            "• at HH:MM (e.g., at 14:30)\n" +
+            "• at H:MM am/pm (e.g., at 2:30 pm)\n" +
+            "• tomorrow at H:MM am/pm"
+          );
+          return NextResponse.json({ success: true });
         }
 
-        if (reminderTime.error_message) {
-          responseMessage = reminderTime.error_message;
-          break;
+        // Check if the time is in the past
+        if (parsedTime.getTime() <= Date.now()) {
+          await sendWhatsAppMessage(
+            from,
+            "Sorry, I can't set a reminder for a time that's already passed. Please choose a future time."
+          );
+          return NextResponse.json({ success: true });
         }
 
-        if (!reminderTime.due_date) {
-          console.error("Failed to parse time from message:", parsedResponse.original_message);
-          responseMessage = "I couldn't understand when you want to be reminded. Please try saying something like 'in 5 minutes' or 'tomorrow at 2pm'.";
-          break;
-        }
-
-        // Create the reminder with proper handling of recurrence fields
-        const reminderData: any = {
-          title: parsedResponse.title,
-          description: parsedResponse.description || "",
-          due_date: reminderTime.due_date.toISOString(),
+        const reminderData = {
+          title: parsed.title || "⏰ Reminder",
+          description: parsed.description || "",
+          due_date: parsedTime,
           user_id: from,
-          status: "pending", // Set initial status as pending
-          recurrence_type: "none", // Explicitly set as "none" for non-recurring
-          recurrence_days: [],
-          recurrence_time: null,
+          status: "pending",
+          recurrence_type: parsed.recurrence || "none",
+          recurrence_days: [] as number[],
+          recurrence_time: parsedTime.toLocaleTimeString('en-US', { 
+            hour: '2-digit', 
+            minute: '2-digit',
+            hour12: true 
+          }),
           last_sent: null
         };
 
-        // Only set recurrence fields if it's a recurring reminder
-        if (parsedResponse.recurrence && (parsedResponse.recurrence === "daily" || parsedResponse.recurrence === "weekly")) {
-          reminderData.status = "active"; // Recurring reminders stay active
-          reminderData.recurrence_type = parsedResponse.recurrence;
-          if (parsedResponse.recurrence === 'weekly') {
-            reminderData.recurrence_days = [reminderTime.due_date.getDay()];
+        if (parsed.recurrence === "daily" || parsed.recurrence === "weekly") {
+          reminderData.status = "active";
+          if (parsed.recurrence === "weekly") {
+            reminderData.recurrence_days = [parsedTime.getDay()];
           }
         }
 
         console.log("Creating reminder with data:", JSON.stringify(reminderData, null, 2));
 
-        const reminder = await prisma.reminder.create({
-          data: reminderData
-        });
+        try {
+          const reminder = await prisma.reminder.create({
+            data: reminderData
+          });
 
-        // Send confirmation message
-        const confirmationMessage = `✅ Reminder set!\n\n📝 ${parsedResponse.title}\n⏰ ${reminderTime.due_date.toLocaleTimeString('en-US', { 
-          hour: 'numeric', 
-          minute: 'numeric',
-          hour12: true 
-        })}\n${
-          parsedResponse.description ? `📋 ${parsedResponse.description}\n` : ""
-        }${
-          reminderTime.recurrence_type
-            ? `🔄 Repeats: ${reminderTime.recurrence_type}\n`
-            : ""
-        }${
-          reminderTime.recurrence_days
-            ? `📆 On: ${reminderTime.recurrence_days.join(', ')}\n`
-            : ""
-        }${
-          reminderTime.recurrence_time
-            ? `🕰️ At: ${reminderTime.recurrence_time}\n`
-            : ""
-        }`;
+          const confirmationMessage = `✅ Reminder set!\n\n${
+            reminderData.title.startsWith("⏰") ? "" : "📝 "
+          }${reminderData.title}\n⏰ ${parsedTime.toLocaleString('en-US', {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+          })}${
+            parsed.description ? `\n📋 ${parsed.description}` : ""
+          }${
+            parsed.recurrence
+              ? `\n🔄 Repeats: ${parsed.recurrence}`
+              : ""
+          }`;
 
-        await sendWhatsAppMessage(from, confirmationMessage);
+          await sendWhatsAppMessage(from, confirmationMessage);
 
-        // Store the confirmation message
+          await prisma.contentItem.create({
+            data: {
+              type: "confirmation",
+              content: confirmationMessage,
+              user_id: from,
+            },
+          });
+        } catch (error) {
+          console.error("Error creating reminder:", error);
+          await sendWhatsAppMessage(
+            from,
+            "Sorry, I encountered an error while setting your reminder. Please try again."
+          );
+          throw error;
+        }
+      } else if (parsed.time) {
+        // If there's a time but parsing failed for some other reason
+        await sendWhatsAppMessage(
+          from,
+          "I couldn't process your reminder. Please try using one of these formats:\n\n" +
+          "✅ Set a reminder at 2:30 pm\n" +
+          "✅ Remind me to call John at 3pm\n" +
+          "✅ Daily reminder at 9am"
+        );
+      } else {
+        // General help message
+        await sendWhatsAppMessage(from, HELP_MESSAGE);
+
         await prisma.contentItem.create({
           data: {
-            type: "confirmation",
-            content: confirmationMessage,
+            type: "help_message",
+            content: HELP_MESSAGE,
             user_id: from,
           },
         });
-        break;
       }
-      case "content":
-        // Save content to database
-        const { data: content, error: contentError } = await prisma.contentItem.create({
-          data: {
-            type: parsedResponse.contentType,
-            content: parsedResponse.content,
-            user_id: from,
-            created_at: new Date().toISOString(),
-          },
-        });
 
-        if (contentError) {
-          console.error("Failed to save content:", contentError);
-          responseMessage =
-            "Sorry, I could not save your content. Please try again.";
-        } else {
-          responseMessage =
-            "Content saved successfully! Would you like to categorize it?";
-        }
-        break;
-
-      case "query":
-        responseMessage = `Hello! I'm MindlyQ, your personal WhatsApp assistant. I can help you with:
-1. Setting reminders (e.g., "Remind me to call John tomorrow at 2pm")
-2. Saving content (e.g., "Save this article: https://mindlyq.com")
-3. Managing categories (e.g., "Create category Work")
-
-How can I help you today?`;
-        break;
-
-      default:
-        responseMessage =
-          "I'm not sure how to help with that. Try asking me to set a reminder or save some content!";
+      return NextResponse.json({ success: true });
+    } catch (error) {
+      console.error("Error parsing Gemini response:", error);
+      const errorMessage = "Sorry, I couldn't process your request. Please try again with a different format.";
+      await sendWhatsAppMessage(from, errorMessage);
+      
+      return NextResponse.json(
+        { error: "Failed to process reminder" },
+        { status: 500 }
+      );
     }
-
-    console.log("Sending response:", responseMessage);
-
-    // Send response back to WhatsApp
-    await sendWhatsAppMessage(from, responseMessage);
-
-    return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Webhook error:", error);
+    console.error("Error in webhook:", error);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }

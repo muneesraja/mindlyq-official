@@ -36,112 +36,58 @@ function parseTimeString(timeStr: string): { hours: number; minutes: number } | 
   return null;
 }
 
-export function parseReminderTime(message: string): ReminderTime {
-  message = message.toLowerCase();
+export function parseReminderTime(message: string): Date | null {
+  message = message.toLowerCase().trim();
   const now = new Date();
-  const result: ReminderTime = {
-    due_date: null,
-    recurrence_type: 'none'
-  };
 
-  // Check for recurring patterns
-  if (message.includes('everyday') || message.includes('every day')) {
-    result.recurrence_type = 'daily';
-    const timeMatch = message.match(/(at|@)?\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i);
-    if (timeMatch) {
-      const timeStr = timeMatch[2];
-      const parsedTime = parseTimeString(timeStr);
-      if (parsedTime) {
-        result.recurrence_time = `${parsedTime.hours.toString().padStart(2, '0')}:${parsedTime.minutes.toString().padStart(2, '0')}`;
-        result.due_date = setMinutes(setHours(startOfDay(now), parsedTime.hours), parsedTime.minutes);
-      }
+  // Handle "in X minutes/hours"
+  const relativeMatch = message.match(/in (\d+) (minute|minutes|hour|hours)/);
+  if (relativeMatch) {
+    const amount = parseInt(relativeMatch[1]);
+    const unit = relativeMatch[2];
+    if (unit.startsWith('hour')) {
+      return add(now, { hours: amount });
     } else {
-      result.needs_time_clarification = true;
-      return result;
+      return add(now, { minutes: amount });
     }
   }
 
-  // Check for weekly patterns
-  else if (message.includes('every week') || message.includes('weekly')) {
-    result.recurrence_type = 'weekly';
-    const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-    const foundDays = days.filter(day => message.includes(day));
-    
-    if (foundDays.length > 0) {
-      result.recurrence_days = foundDays.map(day => days.indexOf(day));
-      const timeMatch = message.match(/(at|@)?\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i);
-      if (timeMatch) {
-        const timeStr = timeMatch[2];
-        const parsedTime = parseTimeString(timeStr);
-        if (parsedTime) {
-          result.recurrence_time = `${parsedTime.hours.toString().padStart(2, '0')}:${parsedTime.minutes.toString().padStart(2, '0')}`;
-          // Set first occurrence
-          let dueDate = startOfDay(now);
-          while (!result.recurrence_days.includes(dueDate.getDay())) {
-            dueDate = add(dueDate, { days: 1 });
-          }
-          result.due_date = setMinutes(setHours(dueDate, parsedTime.hours), parsedTime.minutes);
-        } else {
-          result.needs_time_clarification = true;
-          return result;
-        }
-      } else {
-        result.needs_time_clarification = true;
-        return result;
+  // Handle "at HH:MM" or "at H:MM am/pm"
+  const timeMatch = message.match(/at (\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i);
+  if (timeMatch) {
+    const timeStr = timeMatch[1].trim();
+    const parsedTime = parseTimeString(timeStr);
+    if (parsedTime) {
+      const reminderDate = new Date(now);
+      reminderDate.setHours(parsedTime.hours);
+      reminderDate.setMinutes(parsedTime.minutes);
+      reminderDate.setSeconds(0);
+      reminderDate.setMilliseconds(0);
+
+      // If the time has already passed today, set it for tomorrow
+      if (reminderDate.getTime() <= now.getTime()) {
+        reminderDate.setDate(reminderDate.getDate() + 1);
       }
-    } else {
-      result.error_message = "Please specify which day of the week.";
-      return result;
+      return reminderDate;
     }
   }
 
-  // Handle one-time reminders
-  else {
-    // Check for relative time patterns with more flexible matching
-    const minutePattern = /(?:(\d+)\s*min(?:ute)?s?|(?:a|one)\s*min(?:ute)?)/i;
-    const hourPattern = /(?:(\d+)\s*hour?s?|(?:a|one)\s*hour)/i;
-    
-    const minuteMatch = message.match(minutePattern);
-    const hourMatch = message.match(hourPattern);
-    
-    if (minuteMatch) {
-      const minutes = minuteMatch[1] ? parseInt(minuteMatch[1]) : 1;
-      result.due_date = add(now, { minutes });
-    } else if (hourMatch) {
-      const hours = hourMatch[1] ? parseInt(hourMatch[1]) : 1;
-      result.due_date = add(now, { hours });
-    }
-    // Check for "tomorrow"
-    else if (message.includes('tomorrow')) {
-      const timeMatch = message.match(/(at|@)?\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i);
-      if (timeMatch) {
-        const timeStr = timeMatch[2];
-        const parsedTime = parseTimeString(timeStr);
-        if (parsedTime) {
-          result.due_date = setMinutes(
-            setHours(add(startOfDay(now), { days: 1 }), parsedTime.hours),
-            parsedTime.minutes
-          );
-        }
-      } else {
-        result.needs_time_clarification = true;
-        return result;
-      }
-    }
-    // If no time specified
-    else if (!message.match(/\d{1,2}(?::\d{2})?\s*(?:am|pm)?/i)) {
-      result.needs_time_clarification = true;
-      return result;
+  // Handle "tomorrow at HH:MM"
+  const tomorrowMatch = message.match(/tomorrow at (\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i);
+  if (tomorrowMatch) {
+    const timeStr = tomorrowMatch[1].trim();
+    const parsedTime = parseTimeString(timeStr);
+    if (parsedTime) {
+      const reminderDate = add(now, { days: 1 });
+      reminderDate.setHours(parsedTime.hours);
+      reminderDate.setMinutes(parsedTime.minutes);
+      reminderDate.setSeconds(0);
+      reminderDate.setMilliseconds(0);
+      return reminderDate;
     }
   }
 
-  // Validate the time is not in the past
-  if (result.due_date && !result.recurrence_type && isAfter(now, result.due_date)) {
-    result.error_message = "Sorry, I cannot set reminders in the past. Please choose a future time.";
-    result.due_date = null;
-  }
-
-  return result;
+  return null;
 }
 
 export function parseDuration(duration: string): Date | null {
