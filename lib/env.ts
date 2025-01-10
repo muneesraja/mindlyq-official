@@ -16,7 +16,9 @@ const envSchema = z.object({
   API_URL: z.string().url(),
 });
 
-export class Env {
+export type EnvConfig = z.infer<typeof envSchema>;
+
+class EnvClass {
   static readonly TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID ?? "";
   static readonly TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN ?? "";
   static readonly TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER ?? "";
@@ -25,42 +27,29 @@ export class Env {
   static readonly API_URL = process.env.API_URL ?? "";
 }
 
-export function validateEnv() {
-  const requiredEnvVars = [
-    "TWILIO_ACCOUNT_SID",
-    "TWILIO_AUTH_TOKEN",
-    "TWILIO_PHONE_NUMBER",
-    "GOOGLE_GEMINI_API_KEY",
-    "DATABASE_URL",
-    "API_URL"
-  ];
+export const Env = EnvClass;
 
-  const missingEnvVars = requiredEnvVars.filter(
-    (envVar) => !process.env[envVar]
-  );
+export function validateEnv(): EnvConfig {
+  if (!process.env.TWILIO_ACCOUNT_SID) throw new Error("TWILIO_ACCOUNT_SID is required");
+  if (!process.env.TWILIO_AUTH_TOKEN) throw new Error("TWILIO_AUTH_TOKEN is required");
+  if (!process.env.TWILIO_PHONE_NUMBER) throw new Error("TWILIO_PHONE_NUMBER is required");
+  if (!process.env.GOOGLE_GEMINI_API_KEY) throw new Error("GOOGLE_GEMINI_API_KEY is required");
+  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
+  if (!process.env.API_URL) throw new Error("API_URL is required");
 
-  if (missingEnvVars.length > 0) {
-    throw new Error(
-      `Missing required environment variables: ${missingEnvVars.join(", ")}`
-    );
-  }
+  const env = {
+    TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
+    TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN,
+    TWILIO_PHONE_NUMBER: process.env.TWILIO_PHONE_NUMBER,
+    GOOGLE_GEMINI_API_KEY: process.env.GOOGLE_GEMINI_API_KEY,
+    DATABASE_URL: process.env.DATABASE_URL,
+    API_URL: process.env.API_URL,
+  };
 
   try {
-    const parsed = envSchema.parse({
-      TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
-      TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN,
-      TWILIO_PHONE_NUMBER: process.env.TWILIO_PHONE_NUMBER,
-      GOOGLE_GEMINI_API_KEY: process.env.GOOGLE_GEMINI_API_KEY,
-      DATABASE_URL: process.env.DATABASE_URL,
-      API_URL: process.env.API_URL,
-    });
-    return { valid: true, env: parsed };
+    return envSchema.parse(env);
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return { valid: false, error: error.errors };
-    }
-    throw error;
+    console.error("❌ Invalid environment variables:", error);
+    throw new Error("Invalid environment variables");
   }
 }
-
-export type Env = z.infer<typeof envSchema>;

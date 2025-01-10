@@ -8,7 +8,7 @@ const twilioClient = twilio(
   process.env.TWILIO_AUTH_TOKEN
 );
 
-export const runtime = "edge";
+// Remove edge runtime, use Node.js runtime instead
 export const dynamic = "force-dynamic";
 
 // This endpoint will be called by Vercel Cron
