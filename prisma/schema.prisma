@@ -1,0 +1,33 @@
+// This is your Prisma schema file
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Reminder {
+  id              String    @id @default(cuid())
+  title           String
+  description     String?
+  due_date        DateTime
+  user_id         String
+  status          String    @default("active")
+  recurrence_type String?
+  recurrence_days Int[]     @default([])
+  recurrence_time String?
+  last_sent       DateTime?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+}
+
+model ContentItem {
+  id         String   @id @default(cuid())
+  type       String
+  content    String
+  user_id    String
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}

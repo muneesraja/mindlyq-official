@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import twilio from "twilio";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { supabase } from "@/lib/supabase";
+import { prisma } from "@/lib/db";
 import { parseReminderTime } from "@/lib/utils/dateUtils";
 
 // Initialize Gemini API
@@ -15,6 +15,24 @@ const twilioClient = twilio(
 
 // Mark this route as dynamic
 export const dynamic = "force-dynamic";
+
+async function sendWhatsAppMessage(to: string, body: string) {
+  if (!body || body.trim() === '') {
+    console.error('Attempted to send empty message');
+    return;
+  }
+
+  try {
+    await twilioClient.messages.create({
+      body: body,
+      from: process.env.TWILIO_PHONE_NUMBER,
+      to: `whatsapp:${to}`,
+    });
+  } catch (error) {
+    console.error('Error sending WhatsApp message:', error);
+    throw error;
+  }
+}
 
 export async function POST(req: Request) {
   try {
@@ -54,6 +72,15 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
+
+    // Store the incoming message
+    await prisma.contentItem.create({
+      data: {
+        type: "incoming_message",
+        content: message,
+        user_id: from,
+      },
+    });
 
     // Process the message with Gemini
     const prompt = `You are MindlyQ, a WhatsApp bot that helps users manage reminders and organize content. 
@@ -150,72 +177,77 @@ export async function POST(req: Request) {
           break;
         }
 
-        // Save reminder to database
-        try {
-          const reminderData: any = {
-            title: parsedResponse.title,
-            description: parsedResponse.description,
-            due_date: reminderTime.due_date.toISOString(),
-            user_id: from,
-            status: 'active'
-          };
+        // Create the reminder with proper handling of recurrence fields
+        const reminderData: any = {
+          title: parsedResponse.title,
+          description: parsedResponse.description || "",
+          due_date: reminderTime.due_date.toISOString(),
+          user_id: from,
+          status: "pending", // Set initial status as pending
+          recurrence_type: "none", // Explicitly set as "none" for non-recurring
+          recurrence_days: [],
+          recurrence_time: null,
+          last_sent: null
+        };
 
-          // Only add recurrence fields if they have values
-          if (reminderTime.recurrence_type && reminderTime.recurrence_type !== 'none') {
-            reminderData.recurrence_type = reminderTime.recurrence_type;
-            if (reminderTime.recurrence_days?.length) {
-              reminderData.recurrence_days = reminderTime.recurrence_days;
-            }
-            if (reminderTime.recurrence_time) {
-              reminderData.recurrence_time = reminderTime.recurrence_time;
-            }
+        // Only set recurrence fields if it's a recurring reminder
+        if (parsedResponse.recurrence && (parsedResponse.recurrence === "daily" || parsedResponse.recurrence === "weekly")) {
+          reminderData.status = "active"; // Recurring reminders stay active
+          reminderData.recurrence_type = parsedResponse.recurrence;
+          if (parsedResponse.recurrence === 'weekly') {
+            reminderData.recurrence_days = [reminderTime.due_date.getDay()];
           }
-
-          console.log("Saving reminder with data:", reminderData);
-
-          const { data: reminder, error: reminderError } = await supabase
-            .from("reminders")
-            .insert(reminderData)
-            .select()
-            .single();
-
-          if (reminderError) {
-            console.error("Failed to save reminder:", reminderError);
-            responseMessage = "Sorry, I couldn't save your reminder. Please try again.";
-          } else {
-            if (reminderTime.recurrence_type === 'daily') {
-              responseMessage = `✅ Daily reminder set: "${parsedResponse.title}" at ${reminderTime.recurrence_time}`;
-            } else if (reminderTime.recurrence_type === 'weekly') {
-              const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-              const dayNames = reminderTime.recurrence_days?.map(d => days[d]).join(', ');
-              responseMessage = `✅ Weekly reminder set: "${parsedResponse.title}" every ${dayNames} at ${reminderTime.recurrence_time}`;
-            } else {
-              const formattedTime = reminderTime.due_date.toLocaleTimeString('en-US', { 
-                hour: 'numeric', 
-                minute: 'numeric',
-                hour12: true 
-              });
-              responseMessage = `✅ Reminder "${parsedResponse.title}" set for ${formattedTime}`;
-            }
-          }
-        } catch (error) {
-          console.error("Error saving reminder:", error);
-          responseMessage = "Sorry, something went wrong while saving your reminder. Please try again.";
         }
+
+        console.log("Creating reminder with data:", JSON.stringify(reminderData, null, 2));
+
+        const reminder = await prisma.reminder.create({
+          data: reminderData
+        });
+
+        // Send confirmation message
+        const confirmationMessage = `✅ Reminder set!\n\n📝 ${parsedResponse.title}\n⏰ ${reminderTime.due_date.toLocaleTimeString('en-US', { 
+          hour: 'numeric', 
+          minute: 'numeric',
+          hour12: true 
+        })}\n${
+          parsedResponse.description ? `📋 ${parsedResponse.description}\n` : ""
+        }${
+          reminderTime.recurrence_type
+            ? `🔄 Repeats: ${reminderTime.recurrence_type}\n`
+            : ""
+        }${
+          reminderTime.recurrence_days
+            ? `📆 On: ${reminderTime.recurrence_days.join(', ')}\n`
+            : ""
+        }${
+          reminderTime.recurrence_time
+            ? `🕰️ At: ${reminderTime.recurrence_time}\n`
+            : ""
+        }`;
+
+        await sendWhatsAppMessage(from, confirmationMessage);
+
+        // Store the confirmation message
+        await prisma.contentItem.create({
+          data: {
+            type: "confirmation",
+            content: confirmationMessage,
+            user_id: from,
+          },
+        });
         break;
       }
       case "content":
         // Save content to database
-        const { data: content, error: contentError } = await supabase
-          .from("content_items")
-          .insert({
+        const { data: content, error: contentError } = await prisma.contentItem.create({
+          data: {
             type: parsedResponse.contentType,
             content: parsedResponse.content,
             user_id: from,
             created_at: new Date().toISOString(),
-          })
-          .select()
-          .single();
+          },
+        });
 
         if (contentError) {
           console.error("Failed to save content:", contentError);
@@ -244,11 +276,7 @@ How can I help you today?`;
     console.log("Sending response:", responseMessage);
 
     // Send response back to WhatsApp
-    await twilioClient.messages.create({
-      body: responseMessage,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to: `whatsapp:${from}`,
-    });
+    await sendWhatsAppMessage(from, responseMessage);
 
     return NextResponse.json({ success: true });
   } catch (error) {
