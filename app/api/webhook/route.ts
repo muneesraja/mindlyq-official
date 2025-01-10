@@ -100,51 +100,62 @@ export async function POST(req: Request) {
     });
 
     // Process the message with Gemini
+    const currentTime = new Date();
     const prompt = `
       You are a helpful AI assistant processing WhatsApp messages for a reminder app.
+      The current time is: ${currentTime.toISOString()}
+
       Analyze this message: "${messageBody}"
 
       Rules for reminder detection:
-      1. Message must include a time
+      1. Message must include a time reference
       2. Task is optional - if no specific task is mentioned, it's still a valid reminder
-      3. Time must be in one of these formats:
-         - Relative: "in X minutes/hours/days"
+      3. Calculate the exact reminder time based on the current time above
+      4. Support these time formats:
+         - Relative: "in X minutes/hours", "after X minutes/hours", "X minutes/hours from now"
          - Today: "at HH:MM" or "at H:MM am/pm"
          - Tomorrow: "tomorrow at HH:MM" or "tomorrow at H:MM am/pm"
          - Specific date: "on DD/MM at HH:MM" or "on DD/MM/YYYY at HH:MM"
-         - Recurring: "daily/weekly at HH:MM" or "every day/week at H:MM am/pm"
+         - Recurring: "daily/weekly at HH:MM"
 
-      If it's a reminder request, extract:
-      1. Title (the task/action if specified, or "Reminder" if no specific task)
-      2. Description (any additional details)
-      3. Time (the exact time/date mentioned)
-      4. Recurrence (daily/weekly if mentioned)
-      
-      IMPORTANT: Return ONLY the JSON object, without any markdown formatting or code blocks.
-      
-      Format:
+      Format your response as a JSON object with these fields:
       {
         "isReminder": boolean,
         "title": string (the task/action if specified, or "⏰ Reminder" if no specific task),
         "description": string or null,
-        "time": string (the exact time mentioned, e.g., "in 5 minutes", "at 14:30", "tomorrow at 2:30 pm"),
+        "calculatedTime": string (ISO date string of when the reminder should trigger),
         "recurrence": string or null (only "daily" or "weekly")
       }
-      
-      Mark isReminder as true if:
-      1. The message contains a specific time in one of the supported formats
-      2. The message is clearly about setting a reminder (even without a specific task)
 
-      Example valid reminders:
-      - "Remind me to call John in 5 minutes" -> title: "call John"
-      - "Set a reminder at 2:30 pm" -> title: "⏰ Reminder"
-      - "Daily reminder at 10am" -> title: "⏰ Daily Reminder"
-      - "Set a reminder today at 4:37 PM" -> title: "⏰ Reminder"
-      
-      Example invalid reminders:
-      - "Set a reminder" (missing time)
-      - "Remind me tomorrow" (missing specific time)
-      - "Hello" (not a reminder request)
+      Example responses:
+      For "remind me after a minute to go for a walk":
+      {
+        "isReminder": true,
+        "title": "go for a walk",
+        "description": null,
+        "calculatedTime": "2025-01-10T18:27:40+05:30",
+        "recurrence": null
+      }
+
+      For "set a reminder at 7pm":
+      {
+        "isReminder": true,
+        "title": "⏰ Reminder",
+        "description": null,
+        "calculatedTime": "2025-01-10T19:00:00+05:30",
+        "recurrence": null
+      }
+
+      For "daily reminder at 9am to take medicine":
+      {
+        "isReminder": true,
+        "title": "take medicine",
+        "description": null,
+        "calculatedTime": "2025-01-11T09:00:00+05:30",
+        "recurrence": "daily"
+      }
+
+      IMPORTANT: Return ONLY the JSON object, without any markdown formatting or code blocks.
     `;
 
     const result = await model.generateContent(prompt);
@@ -162,23 +173,20 @@ export async function POST(req: Request) {
       console.log("Cleaned response:", cleanedText);
       const parsed = JSON.parse(cleanedText);
 
-      if (parsed.isReminder && parsed.time) {
-        const parsedTime = parseReminderTime(parsed.time);
+      if (parsed.isReminder && parsed.calculatedTime) {
+        const reminderDate = new Date(parsed.calculatedTime);
         
-        if (!parsedTime) {
+        // Validate the parsed date
+        if (isNaN(reminderDate.getTime())) {
           await sendWhatsAppMessage(
             from,
-            "I couldn't understand the time format. Please try using one of these formats:\n" +
-            "• in X minutes (e.g., in 5 minutes)\n" +
-            "• at HH:MM (e.g., at 14:30)\n" +
-            "• at H:MM am/pm (e.g., at 2:30 pm)\n" +
-            "• tomorrow at H:MM am/pm"
+            "Sorry, I had trouble understanding the time. Please try again with a different format."
           );
           return NextResponse.json({ success: true });
         }
 
         // Check if the time is in the past
-        if (parsedTime.getTime() <= Date.now()) {
+        if (reminderDate.getTime() <= Date.now()) {
           await sendWhatsAppMessage(
             from,
             "Sorry, I can't set a reminder for a time that's already passed. Please choose a future time."
@@ -189,12 +197,12 @@ export async function POST(req: Request) {
         const reminderData = {
           title: parsed.title || "⏰ Reminder",
           description: parsed.description || "",
-          due_date: parsedTime,
+          due_date: reminderDate,
           user_id: from,
           status: "pending",
           recurrence_type: parsed.recurrence || "none",
           recurrence_days: [] as number[],
-          recurrence_time: parsedTime.toLocaleTimeString('en-US', { 
+          recurrence_time: reminderDate.toLocaleTimeString('en-US', { 
             hour: '2-digit', 
             minute: '2-digit',
             hour12: true 
@@ -205,7 +213,7 @@ export async function POST(req: Request) {
         if (parsed.recurrence === "daily" || parsed.recurrence === "weekly") {
           reminderData.status = "active";
           if (parsed.recurrence === "weekly") {
-            reminderData.recurrence_days = [parsedTime.getDay()];
+            reminderData.recurrence_days = [reminderDate.getDay()];
           }
         }
 
@@ -218,7 +226,7 @@ export async function POST(req: Request) {
 
           const confirmationMessage = `✅ Reminder set!\n\n${
             reminderData.title.startsWith("⏰") ? "" : "📝 "
-          }${reminderData.title}\n⏰ ${parsedTime.toLocaleString('en-US', {
+          }${reminderData.title}\n⏰ ${reminderDate.toLocaleString('en-US', {
             weekday: 'short',
             month: 'short',
             day: 'numeric',
@@ -250,7 +258,7 @@ export async function POST(req: Request) {
           );
           throw error;
         }
-      } else if (parsed.time) {
+      } else if (parsed.calculatedTime) {
         // If there's a time but parsing failed for some other reason
         await sendWhatsAppMessage(
           from,

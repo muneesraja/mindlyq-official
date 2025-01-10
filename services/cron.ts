@@ -8,30 +8,10 @@ const twilioClient = twilio(
   process.env.TWILIO_AUTH_TOKEN
 );
 
-async function logReminders() {
-  const reminders = await prisma.reminder.findMany({
-    select: {
-      id: true,
-      title: true,
-      status: true,
-      recurrence_type: true,
-      last_sent: true,
-      due_date: true
-    },
-    orderBy: {
-      created_at: 'desc'
-    }
-  });
-  console.log('Current reminders in DB:', JSON.stringify(reminders, null, 2));
-}
-
 export async function processDueReminders() {
   try {
     const now = new Date();
     console.log("\n=== Starting reminder check at:", now.toISOString(), "===");
-    
-    // Log current state
-    await logReminders();
 
     // Find due reminders
     const dueReminders = await prisma.reminder.findMany({
@@ -132,11 +112,6 @@ export async function processDueReminders() {
     );
 
     console.log("\nFinished processing reminders:", results);
-    
-    // Log final state
-    console.log("\nFinal DB state:");
-    await logReminders();
-    
     return results;
   } catch (error) {
     console.error("Error in processDueReminders:", error);
