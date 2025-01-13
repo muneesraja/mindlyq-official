@@ -5,24 +5,17 @@ import { startCronJobs } from './services/cron';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = '0.0.0.0';
+const port = parseInt(process.env.PORT || '3000', 10);
 
-// Railway specific port handling
-const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+console.log(`Starting server with configuration:`);
+console.log(`- Environment: ${process.env.NODE_ENV}`);
+console.log(`- Port: ${port}`);
+console.log(`- Hostname: ${hostname}`);
 
-console.log(`Environment: ${process.env.NODE_ENV}`);
-console.log(`Port: ${port}`);
-console.log(`Hostname: ${hostname}`);
-
-// Prepare Next.js app with custom settings
 const app = next({
   dev,
   hostname,
   port,
-  conf: {
-    compress: true,
-    poweredByHeader: false,
-    generateEtags: true,
-  }
 });
 
 const handle = app.getRequestHandler();
@@ -30,7 +23,6 @@ const handle = app.getRequestHandler();
 // Handle uncaught exceptions
 process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
-  process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -43,9 +35,16 @@ app.prepare().then(() => {
 
   const server = createServer(async (req, res) => {
     try {
-      // Log incoming requests in production
-      if (!dev) {
-        console.log(`${new Date().toISOString()} - ${req.method} ${req.url} - ${req.headers.host}`);
+      // Add CORS headers
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+      // Handle OPTIONS request
+      if (req.method === 'OPTIONS') {
+        res.writeHead(200);
+        res.end();
+        return;
       }
 
       // Add security headers
@@ -65,8 +64,11 @@ app.prepare().then(() => {
   // Error handling for server
   server.on('error', (err) => {
     console.error('Server error:', err);
-    process.exit(1);
   });
+
+  // Keep-alive timeout
+  server.keepAliveTimeout = 65000; // Slightly higher than 60 seconds
+  server.headersTimeout = 66000; // Slightly higher than keepAliveTimeout
 
   // Graceful shutdown
   const shutdown = () => {
