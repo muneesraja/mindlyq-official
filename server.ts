@@ -4,14 +4,8 @@ import next from 'next';
 import { startCronJobs } from './services/cron';
 
 const dev = process.env.NODE_ENV !== 'production';
-const hostname = process.env.HOSTNAME || 'localhost';
+const hostname = '0.0.0.0'; // Allow all incoming connections
 const port = parseInt(process.env.PORT || '3000', 10);
-
-// Enable garbage collection logs in production
-if (!dev) {
-  require('v8').setFlagsFromString('--expose_gc');
-  global.gc && global.gc();
-}
 
 // Prepare Next.js app with custom settings
 const app = next({
@@ -19,9 +13,9 @@ const app = next({
   hostname,
   port,
   conf: {
-    compress: true, // Enable compression
-    poweredByHeader: false, // Remove X-Powered-By header
-    generateEtags: true, // Enable etag generation
+    compress: true,
+    poweredByHeader: false,
+    generateEtags: true,
   }
 });
 
@@ -30,7 +24,6 @@ const handle = app.getRequestHandler();
 // Handle uncaught exceptions
 process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
-  // Perform cleanup
   process.exit(1);
 });
 
@@ -39,18 +32,30 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 app.prepare().then(() => {
-  // Start CRON jobs
   startCronJobs();
   console.log(' CRON jobs started');
 
   const server = createServer(async (req, res) => {
     try {
-      // Add basic security headers
+      // Add security headers
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('X-Frame-Options', 'DENY');
       res.setHeader('X-XSS-Protection', '1; mode=block');
 
+      // Get hostname from request
+      const host = req.headers.host || '';
       const parsedUrl = parse(req.url!, true);
+
+      // Handle www to non-www redirect
+      if (host.startsWith('www.')) {
+        const newHost = host.replace('www.', '');
+        res.writeHead(301, {
+          Location: `https://${newHost}${req.url}`
+        });
+        res.end();
+        return;
+      }
+
       await handle(req, res, parsedUrl);
     } catch (err) {
       console.error('Error occurred handling', req.url, err);
@@ -73,7 +78,6 @@ app.prepare().then(() => {
       process.exit(0);
     });
 
-    // Force shutdown after 10s
     setTimeout(() => {
       console.error('Could not close connections in time, forcefully shutting down');
       process.exit(1);
@@ -83,7 +87,7 @@ app.prepare().then(() => {
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 
-  server.listen(port, () => {
+  server.listen(port, hostname, () => {
     console.log(
       `> Server listening at http://${hostname}:${port} as ${
         dev ? 'development' : process.env.NODE_ENV
