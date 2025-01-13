@@ -42,20 +42,7 @@ app.prepare().then(() => {
       res.setHeader('X-Frame-Options', 'DENY');
       res.setHeader('X-XSS-Protection', '1; mode=block');
 
-      // Get hostname from request
-      const host = req.headers.host || '';
       const parsedUrl = parse(req.url!, true);
-
-      // Handle www to non-www redirect
-      if (host.startsWith('www.')) {
-        const newHost = host.replace('www.', '');
-        res.writeHead(301, {
-          Location: `https://${newHost}${req.url}`
-        });
-        res.end();
-        return;
-      }
-
       await handle(req, res, parsedUrl);
     } catch (err) {
       console.error('Error occurred handling', req.url, err);
