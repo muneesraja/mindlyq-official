@@ -4,20 +4,52 @@ import next from 'next';
 import { startCronJobs } from './services/cron';
 
 const dev = process.env.NODE_ENV !== 'production';
-const hostname = 'localhost';
+const hostname = process.env.HOSTNAME || 'localhost';
 const port = parseInt(process.env.PORT || '3000', 10);
 
-// Prepare Next.js app
-const app = next({ dev, hostname, port });
+// Enable garbage collection logs in production
+if (!dev) {
+  require('v8').setFlagsFromString('--expose_gc');
+  global.gc && global.gc();
+}
+
+// Prepare Next.js app with custom settings
+const app = next({
+  dev,
+  hostname,
+  port,
+  conf: {
+    compress: true, // Enable compression
+    poweredByHeader: false, // Remove X-Powered-By header
+    generateEtags: true, // Enable etag generation
+  }
+});
+
 const handle = app.getRequestHandler();
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  // Perform cleanup
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
 
 app.prepare().then(() => {
   // Start CRON jobs
   startCronJobs();
   console.log(' CRON jobs started');
 
-  createServer(async (req, res) => {
+  const server = createServer(async (req, res) => {
     try {
+      // Add basic security headers
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('X-Frame-Options', 'DENY');
+      res.setHeader('X-XSS-Protection', '1; mode=block');
+
       const parsedUrl = parse(req.url!, true);
       await handle(req, res, parsedUrl);
     } catch (err) {
@@ -25,16 +57,37 @@ app.prepare().then(() => {
       res.statusCode = 500;
       res.end('Internal server error');
     }
-  })
-    .once('error', (err) => {
-      console.error(err);
-      process.exit(1);
-    })
-    .listen(port, () => {
-      console.log(
-        `> Server listening at http://localhost:${port} as ${
-          dev ? 'development' : process.env.NODE_ENV
-        }`
-      );
+  });
+
+  // Error handling for server
+  server.on('error', (err) => {
+    console.error('Server error:', err);
+    process.exit(1);
+  });
+
+  // Graceful shutdown
+  const shutdown = () => {
+    console.log('Received kill signal, shutting down gracefully');
+    server.close(() => {
+      console.log('Closed out remaining connections');
+      process.exit(0);
     });
+
+    // Force shutdown after 10s
+    setTimeout(() => {
+      console.error('Could not close connections in time, forcefully shutting down');
+      process.exit(1);
+    }, 10000);
+  };
+
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
+
+  server.listen(port, () => {
+    console.log(
+      `> Server listening at http://${hostname}:${port} as ${
+        dev ? 'development' : process.env.NODE_ENV
+      }`
+    );
+  });
 });

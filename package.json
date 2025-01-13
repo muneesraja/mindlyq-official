@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "ts-node -r tsconfig-paths/register --project tsconfig.server.json server.ts",
-    "build": "next build",
-    "start": "NODE_ENV=production ts-node -r tsconfig-paths/register --project tsconfig.server.json server.ts",
+    "build": "prisma generate && next build",
+    "start": "NODE_OPTIONS='--max-old-space-size=2048' NODE_ENV=production ts-node -r tsconfig-paths/register --project tsconfig.server.json server.ts",
     "lint": "next lint",
     "postinstall": "prisma generate"
   },
