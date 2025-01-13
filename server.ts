@@ -4,8 +4,14 @@ import next from 'next';
 import { startCronJobs } from './services/cron';
 
 const dev = process.env.NODE_ENV !== 'production';
-const hostname = '0.0.0.0'; // Allow all incoming connections
-const port = parseInt(process.env.PORT || '3000', 10);
+const hostname = '0.0.0.0';
+
+// Railway specific port handling
+const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+
+console.log(`Environment: ${process.env.NODE_ENV}`);
+console.log(`Port: ${port}`);
+console.log(`Hostname: ${hostname}`);
 
 // Prepare Next.js app with custom settings
 const app = next({
@@ -37,6 +43,11 @@ app.prepare().then(() => {
 
   const server = createServer(async (req, res) => {
     try {
+      // Log incoming requests in production
+      if (!dev) {
+        console.log(`${new Date().toISOString()} - ${req.method} ${req.url} - ${req.headers.host}`);
+      }
+
       // Add security headers
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('X-Frame-Options', 'DENY');
