@@ -44,3 +44,32 @@ Your remainder description: Remind me to walk at 10:30 am`
 
 Memorization implementation:
 We are going to implement something like a memorization, where a user sends this "set a remainder on Feb 4 to have a call with amber" but didn't added any time with it, in this case our model should keep this in memory and raise next question with okay what is the time or something which it can be creative, nothing should be hard coded
+
+
+Implemented Context Window Approach
+Pros:
+- Minimal database changes
+- Natural conversation flow
+- Easy to extend
+
+Implementation:
+- Keep a sliding window of last N messages
+- Store in memory with short TTL
+- AI analyzes context window to determine next action
+- Auto-expire incomplete conversations
+
+
+In future:
+Conversation History Approach
+Pros:
+- Most flexible
+- Maintains context naturally
+- Can handle complex conversations
+
+Implementation:
+- Store conversation history in database
+- Send full context to AI in each request
+- AI determines what's missing and asks accordingly
+- Use vector embeddings for context understanding
+
+

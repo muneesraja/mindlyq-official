@@ -31,3 +31,13 @@ model ContentItem {
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 }
+
+model ConversationContext {
+  id          String   @id @default(cuid())
+  userId      String
+  messages    Json[]   @default([])
+  partialData Json?
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
