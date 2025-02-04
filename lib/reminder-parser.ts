@@ -5,7 +5,32 @@ import { getConversationState, updateConversationState, updateReminderData, clea
 // Initialize Google AI
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
 
-const SYSTEM_PROMPT = `You are a reminder assistant helping set reminders through natural conversation.
+// Set default timezone
+const DEFAULT_TIMEZONE = 'Asia/Kolkata';
+
+// Helper function to format date in timezone
+function formatInTimezone(date: Date, timezone: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+    timeZoneName: 'short'
+  }).format(date);
+}
+
+const SYSTEM_PROMPT = `You are a reminder assistant helping set reminders through natural conversation in the Asia/Kolkata timezone.
+
+All times provided are in Indian Standard Time (IST).
+
+IMPORTANT FORMATTING RULES:
+1. Your response must be a valid JSON object
+2. Do not wrap the JSON in code blocks or markdown formatting
+3. Do not include \`\`\`json or \`\`\` markers
+4. Just output the raw JSON directly
 
 Current time: {current_time}
 Previous messages: {conversation_history}
@@ -15,8 +40,10 @@ IMPORTANT RULES:
 1. Detect if the user is trying to set a reminder or just chatting
 2. For casual chat (greetings, small talk), respond with chat type
 3. Only try to collect reminder information if user clearly wants to set a reminder
-4. NEVER ask for reminder details unless user indicates they want to set one
-5. Create engaging and varied reminder notifications:
+4. ONLY ask for time if it's missing. Don't ask for title or date.
+  - Try to understand and get time from this message, like couple of minutes, couple of hours, next week, etc.
+5. If no title is provided, use "Untitled reminder" as the default
+6. Create engaging and varied reminder notifications:
    - Use friendly, conversational tone
    - Add encouraging or motivational messages when relevant
    - Vary the message format to keep it interesting
@@ -26,26 +53,28 @@ IMPORTANT RULES:
      * Any other critical details
    - NEVER add assumptions or details that weren't mentioned by the user
    - NEVER mention specific offices, rooms, or requirements unless explicitly stated
-6. Date handling rules:
+7. Date handling rules:
    - If no date is mentioned but time is provided, assume it's for TODAY
    - "tomorrow" = next day
    - "next week" = 7 days from today
    - If only day of week is mentioned (e.g. "Friday"), use the next occurrence
-   - Always include date in YYYY-MM-DD format in your response
 
-Your response must be JSON in this format:
+Your response must be PURE JSON without any markdown formatting or code blocks:
+
 
 For casual chat (no reminder intent):
 {
   "type": "chat",
   "message": "friendly chat response"
 }
-
+Example for casual chat:
+1. "Hey, what's up?" -> "Hey, what's up? I'm just chatting. What about you?"
+2. "I'm fine, how about you?" -> "I'm fine, how about you?"
 For complete reminder information:
 {
   "type": "complete",
   "data": {
-    "title": "what to remind about",
+    "title": "what to remind about (or 'Untitled reminder' if not specified)",
     "date": "YYYY-MM-DD (use current date if only time was provided)",
     "time": "HH:mm",
     "confirmation_message": "message confirming the reminder was set",
@@ -53,54 +82,52 @@ For complete reminder information:
   }
 }
 
+For incomplete reminder (only when time is missing):
+{
+  "type": "incomplete",
+  "data": {
+    "title": "extracted title or 'Untitled reminder'",
+    "date": "extracted date or current date",
+    "time": null
+  },
+  "message": "friendly message asking for the time"
+}
+
 Example responses:
-1. User: "remind me at 3pm to call mom about the family dinner"
+1. User: "remind me to call mom about the family dinner"
    Response: {
-     "type": "complete",
+     "type": "incomplete",
      "data": {
        "title": "call mom about family dinner",
        "date": "<current_date>",
-       "time": "15:00",
-       "confirmation_message": "I'll remind you to call mom about the family dinner at 3 PM today",
-       "notification_message": "📞 Time to call mom about the family dinner!"
-     }
+       "time": null
+     },
+     "message": "What time would you like me to remind you to call mom about the family dinner?"
    }
 
 2. User: "remind me tomorrow morning to get documents from John at the office"
    Response: {
      "type": "complete",
      "data": {
-       "title": "get documents from John",
+       "title": "get documents from John at the office",
        "date": "<tomorrow_date>",
        "time": "09:00",
-       "confirmation_message": "I'll remind you to get the documents from John tomorrow at 9 AM",
-       "notification_message": "📄 Head to the office to collect those documents from John! "
+       "confirmation_message": "I'll remind you to get the documents from John at the office tomorrow at 9 AM",
+       "notification_message": "📄 Head to the office to collect those documents from John!"
      }
    }
 
-3. User: "remind me at 4:23 to get my degree certificate from Saravanan"
+3. User: "remind me at 4:23"
    Response: {
      "type": "complete",
      "data": {
-       "title": "get degree certificate from Saravanan",
+       "title": "Untitled reminder",
        "date": "<current_date>",
        "time": "16:23",
-       "confirmation_message": "I'll remind you to collect your degree certificate from Saravanan at 4:23 PM today",
-       "notification_message": "🎓 Time to head to college and collect your degree certificate from Saravanan!"
+       "confirmation_message": "I'll remind you at 4:23 PM today",
+       "notification_message": "⏰ Time for your reminder!"
      }
-   }
-
-For incomplete reminder information:
-{
-  "type": "incomplete",
-  "data": {
-    "title": "extracted title or null",
-    "date": "extracted date or null",
-    "time": "extracted time or null"
-  },
-  "missing": ["date", "time", or "title"],
-  "message": "question asking ONLY for the next missing piece"
-}`;
+   }`;
 
 interface ReminderResponse {
   success: boolean;
@@ -178,12 +205,12 @@ export async function parseAndCreateReminder(message: string, userId: string): P
     const knownInfo = {
       date: updatedState.data.date?.toISOString().split('T')[0] || null,
       time: updatedState.data.time || null,
-      title: updatedState.data.title || null
+      title: updatedState.data.title || "Untitled reminder"
     };
 
     // Generate AI response
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-pro",
+      model: "gemini-2.0-flash-exp",
       safetySettings: [
         {
           category: HarmCategory.HARM_CATEGORY_HARASSMENT,
@@ -206,7 +233,7 @@ export async function parseAndCreateReminder(message: string, userId: string): P
 
     const result = await model.generateContent([{
       text: SYSTEM_PROMPT
-        .replace("{current_time}", currentTime.toISOString())
+        .replace("{current_time}", formatInTimezone(currentTime, DEFAULT_TIMEZONE))
         .replace("{conversation_history}", conversationHistory)
         .replace("{known_info}", JSON.stringify(knownInfo))
     }, { text: message }]);
@@ -224,55 +251,31 @@ export async function parseAndCreateReminder(message: string, userId: string): P
     console.log("AI response:", text);
 
     try {
-      const parsed = JSON.parse(text);
+      let cleanJson = text;
+      // Remove markdown code blocks if present
+      if (text.includes('```')) {
+        cleanJson = text.replace(/```json\n?/g, '').replace(/```/g, '').trim();
+      }
+      // Remove any leading/trailing whitespace and ensure we have valid JSON
+      cleanJson = cleanJson.trim();
+      console.log('Cleaned JSON:', cleanJson);
+      const parsed = JSON.parse(cleanJson);
       
       // Add AI response to conversation history
       updateConversationState(userId, parsed.message, 'assistant');
 
       // Handle different response types
       if (parsed.type === "chat") {
-        // For casual conversation, just return the message
         return {
           success: true,
           message: parsed.message
         };
       } else if (parsed.type === "complete") {
-        // Check if we have all required information
-        const missingFields = [];
-        if (!parsed.data.title) missingFields.push("title");
-        if (!parsed.data.date) missingFields.push("date");
-        if (!parsed.data.time) missingFields.push("time");
-
-        // If any required field is missing, treat it as an incomplete reminder
-        if (missingFields.length > 0) {
-          // Update state with what we have
-          updateReminderData(userId, {
-            title: parsed.data.title || undefined,
-            date: parsed.data.date ? new Date(parsed.data.date) : undefined,
-            time: parsed.data.time || undefined
-          });
-
-          // Ask for the first missing field
-          let message = "";
-          if (missingFields.includes("time")) {
-            message = `What time would you like to be reminded${parsed.data.title ? ` about ${parsed.data.title}` : ""}${parsed.data.date ? ` on ${parsed.data.date}` : ""}?`;
-          } else if (missingFields.includes("date")) {
-            message = `When would you like to be reminded${parsed.data.title ? ` about ${parsed.data.title}` : ""}?`;
-          } else {
-            message = "What would you like to be reminded about?";
-          }
-
-          return {
-            success: true,
-            message: message
-          };
-        }
-
-        // Create the reminder only if we have all required fields
+        // Create the reminder with title defaulting to "Untitled reminder" if not provided
         const reminder = await prisma.reminder.create({
           data: {
-            title: parsed.data.title,
-            description: parsed.data.notification_message || parsed.data.message,
+            title: parsed.data.title || "Untitled reminder",
+            description: parsed.data.notification_message,
             due_date: new Date(`${parsed.data.date}T${parsed.data.time}`),
             user_id: userId,
             status: "pending",
@@ -287,15 +290,15 @@ export async function parseAndCreateReminder(message: string, userId: string): P
 
         return {
           success: true,
-          message: parsed.data.confirmation_message || parsed.data.message
+          message: parsed.data.confirmation_message
         };
       }
 
       // For incomplete reminders, update state and continue conversation
       if (parsed.data) {
         updateReminderData(userId, {
-          title: parsed.data.title || undefined,
-          date: parsed.data.date ? new Date(parsed.data.date) : undefined,
+          title: parsed.data.title || "Untitled reminder",
+          date: parsed.data.date ? new Date(parsed.data.date) : currentTime,
           time: parsed.data.time || undefined
         });
       }
