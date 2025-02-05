@@ -43,14 +43,41 @@ export async function POST(req: Request) {
     // Process the message using our reminder parser
     const result = await parseAndCreateReminder(message, userId);
 
-    // Send response back to user via Twilio
-    await twilioClient.messages.create({
-      body: result.message,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to: from,
-    });
+    console.log("Sending response:", result.message);
 
-    // Return TwiML response
+    try {
+      // Log the exact values being used
+      console.log("Sending with:", {
+        to: from,
+        from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
+        body: result.message
+      });
+
+      // Send response back to user via Twilio
+      const twilioResponse = await twilioClient.messages.create({
+        body: result.message,
+        from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
+        to: from,
+      });
+
+      console.log("Twilio response sent:", twilioResponse.sid);
+      
+      // Fetch and log the message status
+      const messageStatus = await twilioClient.messages(twilioResponse.sid).fetch();
+      console.log("Message status:", {
+        sid: messageStatus.sid,
+        status: messageStatus.status,
+        errorCode: messageStatus.errorCode,
+        errorMessage: messageStatus.errorMessage,
+        direction: messageStatus.direction,
+        from: messageStatus.from,
+        to: messageStatus.to
+      });
+    } catch (sendError) {
+      console.error("Error sending WhatsApp message:", sendError);
+    }
+
+    // Return a success response to Twilio
     return new Response(
       `<?xml version='1.0' encoding='UTF-8'?><Response></Response>`,
       {

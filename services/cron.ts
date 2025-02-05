@@ -83,7 +83,7 @@ export async function processDueReminders() {
             body: `🔔 Reminder: ${reminder.title}${
               reminder.description ? `\n\n${reminder.description}` : ""
             }`,
-            from: process.env.TWILIO_PHONE_NUMBER,
+            from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
             to: `whatsapp:${reminder.user_id}`
           });
 
