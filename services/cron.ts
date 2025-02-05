@@ -8,10 +8,35 @@ const twilioClient = twilio(
   process.env.TWILIO_AUTH_TOKEN
 );
 
+// Add timezone constant at the top
+const DEFAULT_TIMEZONE = 'Asia/Kolkata';
+
+// Helper function to get current time in timezone
+function getCurrentTimeInTimezone(timezone: string): Date {
+  const now = new Date();
+  const tzString = now.toLocaleString('en-US', { timeZone: timezone });
+  return new Date(tzString);
+}
+
+// Helper function to format date in timezone
+function formatInTimezone(date: Date, timezone: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
+}
+
 export async function processDueReminders() {
   try {
-    const now = new Date();
-    console.log("\n=== Starting reminder check at:", now.toISOString(), "===");
+    // Get current time in Asia/Kolkata
+    const now = getCurrentTimeInTimezone(DEFAULT_TIMEZONE);
+    
+    console.log("\n=== Starting reminder check at:", formatInTimezone(now, DEFAULT_TIMEZONE), "===");
 
     // Find due reminders
     const dueReminders = await prisma.reminder.findMany({
@@ -123,5 +148,7 @@ export function startCronJobs() {
   console.log("Starting cron jobs...");
   cron.schedule('* * * * *', async () => {
     await processDueReminders();
+  }, {
+    timezone: 'Asia/Kolkata'
   });
 }
