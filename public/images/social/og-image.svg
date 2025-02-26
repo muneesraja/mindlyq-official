@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background gradient -->
+  <rect width="1200" height="630" fill="url(#paint0_linear)" />
+  
+  <!-- Logo area -->
+  <rect x="150" y="150" width="900" height="330" rx="20" fill="white" fill-opacity="0.9" />
+  
+  <!-- Title -->
+  <text x="600" y="250" font-family="Arial, sans-serif" font-size="60" font-weight="bold" text-anchor="middle" fill="#333333">MindlyQ</text>
+  
+  <!-- Tagline -->
+  <text x="600" y="320" font-family="Arial, sans-serif" font-size="36" text-anchor="middle" fill="#666666">Your Smart WhatsApp Assistant</text>
+  
+  <!-- Features -->
+  <text x="600" y="400" font-family="Arial, sans-serif" font-size="24" text-anchor="middle" fill="#888888">AI-powered reminders • Content management • Smart organization</text>
+  
+  <!-- WhatsApp icon suggestion -->
+  <circle cx="400" y="250" r="40" fill="#25D366" />
+  
+  <!-- Gradient definition -->
+  <defs>
+    <linearGradient id="paint0_linear" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#6366F1" />
+      <stop offset="100%" stop-color="#EC4899" />
+    </linearGradient>
+  </defs>
+</svg>
