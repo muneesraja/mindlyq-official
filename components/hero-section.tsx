@@ -3,6 +3,14 @@
 import { WhatsAppButton } from "./whatsapp-button";
 
 export function HeroSection() {
+  const scrollToHowItWorks = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    const howItWorksSection = document.getElementById('how-it-works');
+    if (howItWorksSection) {
+      howItWorksSection.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
   return (
     <section className="relative overflow-hidden pt-20 pb-32">
       {/* Background Elements - Visible on all screens */}
@@ -57,6 +65,8 @@ export function HeroSection() {
               <WhatsAppButton
                 variant="outline"
                 className="border-2 border-accent-1 text-accent-1 hover:bg-accent-1 hover:text-white px-8 py-4 text-lg rounded-full transition-all duration-300 transform hover:-translate-y-1"
+                onClick={scrollToHowItWorks}
+                redirectToWhatsApp={false}
               >
                 Watch Demo
               </WhatsAppButton>
