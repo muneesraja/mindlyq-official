@@ -1,151 +1,187 @@
 import { prisma } from './db';
-import { Prisma } from '@prisma/client';
 
-// Define a type that matches Prisma's JSON structure
-type MessageJSON = {
-  [key: string]: string | Date;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: Date;
-};
-
-interface Message extends MessageJSON {
+// Define the structure for a conversation message
+interface ConversationMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
 }
 
-interface PartialReminderData {
-  title?: string;
-  date?: string;
-  time?: string;
-  recurrence?: {
-    type: 'none' | 'daily' | 'weekly';
-    days?: number[];
-  };
+// Define the structure for conversation context
+interface ConversationContextData {
+  messages: ConversationMessage[];
+  partialData?: any;
+  expiresAt: Date;
 }
 
-export async function getOrCreateContext(userId: string): Promise<string> {
-  // Clean up expired contexts
+// In-memory cache for conversation contexts
+const conversationContexts: Map<string, ConversationContextData> = new Map();
 
-  await prisma.conversationContext.deleteMany({
-    where: {
-      expiresAt: {
-        lt: new Date()
-      }
+// Set expiration time for conversation contexts (30 minutes)
+const CONTEXT_EXPIRATION_MS = 30 * 60 * 1000;
+
+/**
+ * Get the conversation context for a user
+ * @param userId The user ID
+ * @returns The conversation context
+ */
+export async function getConversationContext(userId: string): Promise<ConversationContextData> {
+  // Check if we have the context in memory
+  if (conversationContexts.has(userId)) {
+    const context = conversationContexts.get(userId)!;
+    
+    // Check if the context has expired
+    if (context.expiresAt > new Date()) {
+      return context;
     }
-  });
-
-  // Find existing active context
-  const existingContext = await prisma.conversationContext.findFirst({
-    where: {
-      userId,
-      expiresAt: {
-        gt: new Date()
-      }
-    }
-  });
-
-  if (existingContext) {
-    // Update expiry
-    const newExpiry = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes from now
-    await prisma.conversationContext.update({
-      where: { id: existingContext.id },
-      data: { expiresAt: newExpiry }
-    });
-    return existingContext.id;
+    
+    // Context has expired, remove it from memory
+    conversationContexts.delete(userId);
   }
-
-  // Create new context
-  const newContext = await prisma.conversationContext.create({
-    data: {
-      userId,
-      messages: [],
-      partialData: {},
-      expiresAt: new Date(Date.now() + 5 * 60 * 1000)
-    }
+  
+  // Try to get the context from the database
+  const dbContext = await prisma.conversationContext.findUnique({
+    where: { userId }
   });
-
-  return newContext.id;
+  
+  if (dbContext && dbContext.expiresAt > new Date()) {
+    // Parse the messages and partial data
+    const messages = dbContext.messages as ConversationMessage[];
+    const partialData = dbContext.partialData ? JSON.parse(dbContext.partialData as string) : undefined;
+    
+    // Create the context
+    const context: ConversationContextData = {
+      messages,
+      partialData,
+      expiresAt: dbContext.expiresAt
+    };
+    
+    // Store the context in memory
+    conversationContexts.set(userId, context);
+    
+    return context;
+  }
+  
+  // No valid context found, create a new one
+  const newContext: ConversationContextData = {
+    messages: [],
+    expiresAt: new Date(Date.now() + CONTEXT_EXPIRATION_MS)
+  };
+  
+  // Store the new context in memory
+  conversationContexts.set(userId, newContext);
+  
+  return newContext;
 }
 
-export async function addMessage(contextId: string, role: 'user' | 'assistant', content: string) {
-  const context = await prisma.conversationContext.findUnique({
-    where: { id: contextId }
-  });
-
-  if (!context) throw new Error('Context not found');
-
-  // Safely cast the messages array
-  const messages = (context.messages as any[]).map(msg => ({
-    role: msg.role as 'user' | 'assistant',
-    content: msg.content as string,
-    timestamp: new Date(msg.timestamp)
-  })) as Message[];
-
-  messages.push({
+/**
+ * Add a message to the conversation context
+ * @param userId The user ID
+ * @param content The message content
+ * @param role The role of the message sender
+ */
+export async function addMessageToContext(userId: string, content: string, role: 'user' | 'assistant'): Promise<void> {
+  // Get the current context
+  const context = await getConversationContext(userId);
+  
+  // Add the message
+  context.messages.push({
     role,
     content,
     timestamp: new Date()
-  } as MessageJSON);
-
-  // Keep only last 5 messages
-  const recentMessages = messages.slice(-5);
-
-  await prisma.conversationContext.update({
-    where: { id: contextId },
-    data: {
-      messages: recentMessages as unknown as Prisma.InputJsonValue[],
-      expiresAt: new Date(Date.now() + 5 * 60 * 1000)
+  });
+  
+  // Limit the number of messages to 10 (keep the conversation focused)
+  if (context.messages.length > 10) {
+    context.messages = context.messages.slice(-10);
+  }
+  
+  // Reset the expiration time
+  context.expiresAt = new Date(Date.now() + CONTEXT_EXPIRATION_MS);
+  
+  // Update the context in memory
+  conversationContexts.set(userId, context);
+  
+  // Update the context in the database
+  await prisma.conversationContext.upsert({
+    where: { userId },
+    update: {
+      messages: context.messages,
+      partialData: context.partialData ? JSON.stringify(context.partialData) : null,
+      expiresAt: context.expiresAt
+    },
+    create: {
+      userId,
+      messages: context.messages,
+      partialData: context.partialData ? JSON.stringify(context.partialData) : null,
+      expiresAt: context.expiresAt
     }
   });
-
-  return recentMessages;
 }
 
-export async function updatePartialData(contextId: string, data: Partial<PartialReminderData>) {
-  const context = await prisma.conversationContext.findUnique({
-    where: { id: contextId }
-  });
-
-  if (!context) throw new Error('Context not found');
-
-  const currentData = context.partialData as PartialReminderData || {};
-  const updatedData = { ...currentData, ...data };
-
-  await prisma.conversationContext.update({
-    where: { id: contextId },
-    data: {
-      partialData: updatedData,
-      expiresAt: new Date(Date.now() + 5 * 60 * 1000)
+/**
+ * Update the partial data in the conversation context
+ * @param userId The user ID
+ * @param partialData The partial data
+ */
+export async function updatePartialData(userId: string, partialData: any): Promise<void> {
+  // Get the current context
+  const context = await getConversationContext(userId);
+  
+  // Update the partial data
+  context.partialData = partialData;
+  
+  // Reset the expiration time
+  context.expiresAt = new Date(Date.now() + CONTEXT_EXPIRATION_MS);
+  
+  // Update the context in memory
+  conversationContexts.set(userId, context);
+  
+  // Update the context in the database
+  await prisma.conversationContext.upsert({
+    where: { userId },
+    update: {
+      partialData: JSON.stringify(partialData),
+      expiresAt: context.expiresAt
+    },
+    create: {
+      userId,
+      messages: context.messages,
+      partialData: JSON.stringify(partialData),
+      expiresAt: context.expiresAt
     }
   });
-
-  return updatedData;
 }
 
-export async function getContext(contextId: string) {
-  const context = await prisma.conversationContext.findUnique({
-    where: { id: contextId }
-  });
-
-  if (!context) throw new Error('Context not found');
-
-  // Safely cast the messages array
-  const messages = (context.messages as any[]).map(msg => ({
-    role: msg.role as 'user' | 'assistant',
-    content: msg.content as string,
-    timestamp: new Date(msg.timestamp)
-  })) as Message[];
-
-  return {
-    messages,
-    partialData: context.partialData as PartialReminderData
-  };
-}
-
-export async function clearContext(contextId: string) {
+/**
+ * Clear the conversation context for a user
+ * @param userId The user ID
+ */
+export async function clearConversationContext(userId: string): Promise<void> {
+  // Remove the context from memory
+  conversationContexts.delete(userId);
+  
+  // Remove the context from the database
   await prisma.conversationContext.delete({
-    where: { id: contextId }
+    where: { userId }
+  }).catch(() => {
+    // Ignore errors if the context doesn't exist
   });
+}
+
+/**
+ * Get the conversation history as a formatted string
+ * @param userId The user ID
+ * @returns The conversation history
+ */
+export async function getFormattedConversationHistory(userId: string): Promise<string> {
+  const context = await getConversationContext(userId);
+  
+  if (context.messages.length === 0) {
+    return "No previous messages.";
+  }
+  
+  return context.messages
+    .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+    .join('\n');
 }

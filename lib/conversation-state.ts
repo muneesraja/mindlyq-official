@@ -4,6 +4,10 @@ const conversationStates = new Map<string, {
     title?: string;
     date?: Date;
     time?: string;
+    isRecurring?: boolean;
+    recurrenceType?: 'daily' | 'weekly' | 'monthly' | 'yearly';
+    recurrenceDays?: number[];
+    recurrenceTime?: string;
     lastUpdate: Date;
   },
   messages: { role: 'user' | 'assistant', content: string }[]
@@ -53,6 +57,10 @@ export function updateReminderData(userId: string, updates: {
   title?: string;
   date?: Date;
   time?: string;
+  isRecurring?: boolean;
+  recurrenceType?: 'daily' | 'weekly' | 'monthly' | 'yearly';
+  recurrenceDays?: number[];
+  recurrenceTime?: string;
 }) {
   let state = conversationStates.get(userId);
   

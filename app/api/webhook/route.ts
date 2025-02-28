@@ -43,19 +43,22 @@ export async function POST(req: Request) {
     // Process the message using our reminder parser
     const result = await parseAndCreateReminder(message, userId);
 
-    console.log("Sending response:", result.message);
+    // Ensure we have a non-empty response message
+    const responseMessage = result.message || "I'm here to help with your reminders. What would you like me to do?";
+
+    console.log("Sending response:", responseMessage);
 
     try {
       // Log the exact values being used
       console.log("Sending with:", {
         to: from,
         from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
-        body: result.message
+        body: responseMessage
       });
 
       // Send response back to user via Twilio
       const twilioResponse = await twilioClient.messages.create({
-        body: result.message,
+        body: responseMessage,
         from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
         to: from,
       });

@@ -34,7 +34,7 @@ model ContentItem {
 
 model ConversationContext {
   id          String   @id @default(cuid())
-  userId      String
+  userId      String   @unique
   messages    Json[]   @default([])
   partialData Json?
   expiresAt   DateTime
