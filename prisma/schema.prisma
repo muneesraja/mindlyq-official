@@ -41,3 +41,11 @@ model ConversationContext {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
+
+model UserPreference {
+  id         String   @id @default(cuid())
+  userId     String   @unique
+  timezone   String   @default("Asia/Kolkata")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}

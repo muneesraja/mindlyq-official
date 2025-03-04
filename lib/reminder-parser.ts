@@ -1,13 +1,11 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { prisma } from "./db";
 import { getConversationState, updateConversationState, updateReminderData, clearConversationState } from "./conversation-state";
-import { parseDateTime, formatDateForHumans, formatRecurrenceForHumans } from "./ai-date-parser";
+import { parseDateTime, formatDateForHumans, formatRecurrenceForHumans, formatTimeForHumans } from "./ai-date-parser";
+import { getUserTimezone } from "./timezone-utils";
 
 // Initialize Google AI
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
-
-// Set default timezone
-const DEFAULT_TIMEZONE = 'Asia/Kolkata';
 
 // Helper function to format date in timezone
 function formatInTimezone(date: Date, timezone: string): string {
@@ -22,6 +20,8 @@ function formatInTimezone(date: Date, timezone: string): string {
     timeZoneName: 'short'
   }).format(date);
 }
+
+
 
 const SYSTEM_PROMPT = `You are MindlyQ, a helpful reminder assistant. Your job is to help users set, modify, and delete reminders through natural language conversation.
 
@@ -88,8 +88,16 @@ For reminder deletion:
   }
 }
 
+For listing reminders:
+{
+  "type": "list",
+  "data": {
+    "filter": "all" // can be "all", "active", "pending", or a search term
+  }
+}
+
 IMPORTANT RULES:
-1. Detect if the user is trying to set a reminder, modify a reminder, delete a reminder, or just chatting
+1. Detect if the user is trying to set a reminder, modify a reminder, delete a reminder, list reminders, or just chatting
 2. For casual chat (greetings, small talk), respond with chat type
 3. Only try to collect reminder information if user clearly wants to set, modify, or delete a reminder
 4. If no title is provided, use "Untitled reminder" as the default
@@ -112,6 +120,11 @@ IMPORTANT RULES:
    - Exact title match if provided
    - Time/date references
    - Context from previous messages
+9. For listing reminders, identify if the user wants to see:
+   - All reminders ("show all my reminders", "list all my reminders")
+   - Active reminders ("show my reminders", "list my reminders") - this is the default and shows only future and recurring reminders
+   - Pending reminders ("show my pending reminders")
+   - Specific reminders by keyword ("show my work reminders")
 `;
 
 interface ReminderResponse {
@@ -376,9 +389,12 @@ export async function parseAndCreateReminder(message: string, userId: string): P
       ],
     });
 
+    // Get user's timezone
+    const userTimezone = await getUserTimezone(userId);
+    
     const result = await model.generateContent([{
       text: SYSTEM_PROMPT
-        .replace("{current_time}", formatInTimezone(new Date(), DEFAULT_TIMEZONE))
+        .replace("{current_time}", formatInTimezone(new Date(), userTimezone))
         .replace("{conversation_history}", conversationHistory)
         .replace("{known_info}", JSON.stringify(knownInfo, null, 2))
     }]);
@@ -551,6 +567,114 @@ export async function parseAndCreateReminder(message: string, userId: string): P
         return {
           success: true,
           message: parsed.data.confirmation_message
+        };
+      } else if (parsed.type === "list") {
+        // List reminders based on filter
+        const filter = parsed.data.filter || "active"; // Default to active reminders
+        let reminders;
+        
+        if (filter === "all") {
+          reminders = await prisma.reminder.findMany({
+            where: {
+              user_id: userId,
+            },
+            orderBy: {
+              due_date: 'asc'
+            }
+          });
+        } else if (filter === "active") {
+          // Get current date in the user's timezone
+          const now = new Date();
+          
+          reminders = await prisma.reminder.findMany({
+            where: {
+              user_id: userId,
+              status: "active",
+              OR: [
+                // Future reminders
+                { due_date: { gt: now } },
+                // Recurring reminders
+                { recurrence_type: { not: "none" } }
+              ]
+            },
+            orderBy: {
+              due_date: 'asc'
+            }
+          });
+        } else if (filter === "pending") {
+          reminders = await prisma.reminder.findMany({
+            where: {
+              user_id: userId,
+              status: "pending",
+            },
+          });
+        } else {
+          reminders = await prisma.reminder.findMany({
+            where: {
+              user_id: userId,
+              title: { contains: filter },
+            },
+          });
+        }
+
+        // Format reminders for display
+        if (reminders.length === 0) {
+          return {
+            success: true,
+            message: "You don't have any reminders at the moment."
+          };
+        }
+        
+        // Limit to 10 reminders to avoid Twilio message length limits
+        const maxReminders = 10;
+        const totalReminders = reminders.length;
+        const displayReminders = reminders.slice(0, maxReminders);
+        
+        let message = `Here are your reminders (${displayReminders.length}${totalReminders > maxReminders ? " of " + totalReminders : ""}):\n`;
+        
+        // Get user's timezone once for all reminders
+        const userTimezone = await getUserTimezone(userId);
+        
+        const formattedReminders = displayReminders.map((reminder, index) => {
+          const date = new Date(reminder.due_date);
+          // Format date more concisely
+          const dateOptions: Intl.DateTimeFormatOptions = {
+            timeZone: userTimezone,
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+          };
+          
+          // Only add year if it's not the current year
+          const currentYear = new Date().getFullYear();
+          if (date.getFullYear() !== currentYear) {
+            dateOptions.year = 'numeric';
+          }
+          
+          const dueDate = new Intl.DateTimeFormat('en-US', dateOptions).format(date);
+          
+          // Shorter recurrence description
+          let recurrenceInfo = "";
+          if (reminder.recurrence_type && reminder.recurrence_type !== "none") {
+            recurrenceInfo = " (recurring)";
+          }
+          
+          return `${index + 1}. "${reminder.title}" - ${dueDate}${recurrenceInfo}`;
+        });
+
+        message += formattedReminders.join("\n");
+        
+        if (totalReminders > maxReminders) {
+          message += `\n\n...and ${totalReminders - maxReminders} more reminder(s).`;
+        }
+        
+        message += "\n\nTip: Modify by saying 'Change my [title] reminder to [time]'";
+
+        return {
+          success: true,
+          message: message
         };
       }
 

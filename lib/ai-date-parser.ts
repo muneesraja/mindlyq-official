@@ -1,10 +1,8 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+import { getUserTimezone } from './timezone-utils';
 
 // Initialize Google AI
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
-
-// Set default timezone
-const DEFAULT_TIMEZONE = 'Asia/Kolkata';
 
 interface DateTimeParseResult {
   success: boolean;
@@ -94,14 +92,17 @@ Examples:
  * @param text The natural language text to parse
  * @returns A structured result with the parsed date and time
  */
-export async function parseDateTime(text: string): Promise<DateTimeParseResult> {
+export async function parseDateTime(text: string, userId?: string): Promise<DateTimeParseResult> {
   try {
     // Get the current time
     const currentTime = new Date();
     
+    // Get user timezone or use UTC as fallback
+    const timezone = userId ? await getUserTimezone(userId) : 'Etc/UTC';
+    
     // Format the current time for the prompt
     const formattedTime = new Intl.DateTimeFormat('en-US', {
-      timeZone: DEFAULT_TIMEZONE,
+      timeZone: timezone,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
@@ -198,9 +199,9 @@ export async function parseDateTime(text: string): Promise<DateTimeParseResult> 
  * @param date The date to format
  * @returns A human-readable date string
  */
-export function formatDateForHumans(date: Date): string {
+export function formatDateForHumans(date: Date, timezone: string = 'Etc/UTC'): string {
   return new Intl.DateTimeFormat('en-US', {
-    timeZone: DEFAULT_TIMEZONE,
+    timeZone: timezone,
     weekday: 'long',
     year: 'numeric',
     month: 'long',
@@ -260,7 +261,7 @@ export function formatRecurrenceForHumans(
  * @param time The time string in HH:MM format
  * @returns A human-readable time string
  */
-function formatTimeForHumans(time: string): string {
+export function formatTimeForHumans(time: string): string {
   const [hours, minutes] = time.split(':').map(Number);
   
   let hour = hours;
