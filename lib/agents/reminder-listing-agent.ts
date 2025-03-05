@@ -119,6 +119,16 @@ export class ReminderListingAgent implements Agent {
       const formattedReminders = displayReminders.map((reminder, index) => {
         const date = new Date(reminder.due_date);
         
+        // Debug logs to track timezone conversion
+        console.log(`Reminder ${index + 1} - ${reminder.title}:`);
+        console.log(`- Original UTC date from DB: ${date.toISOString()}`);
+        console.log(`- User timezone: ${userTimezone}`);
+        
+        // Check if reminder has recurrence_time (which is in local time format HH:MM)
+        if (reminder.recurrence_time) {
+          console.log(`- Has recurrence_time: ${reminder.recurrence_time}`);
+        }
+        
         // Format date using our date-converter utility
         // Determine if we need to include the year
         const currentYear = new Date().getFullYear();
@@ -127,7 +137,22 @@ export class ReminderListingAgent implements Agent {
           'MMM d, yyyy h:mm aa' : 
           'MMM d h:mm aa';
         
-        const dueDate = formatUTCDate(date, userTimezone, formatString);
+        // Use recurrence_time if available for display (since it's already in user's local time format)
+        let dueDate;
+        if (reminder.recurrence_time) {
+          // Extract just the date part from the formatted date
+          const datePart = formatUTCDate(date, userTimezone, 'MMM d');
+          // Use the recurrence_time which is already in local time
+          const [hours, minutes] = reminder.recurrence_time.split(':').map(Number);
+          const period = hours >= 12 ? 'PM' : 'AM';
+          const hour12 = hours % 12 || 12;
+          dueDate = `${datePart} ${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
+          console.log(`- Using recurrence_time for display: ${dueDate}`);
+        } else {
+          // Use standard UTC to local conversion
+          dueDate = formatUTCDate(date, userTimezone, formatString);
+          console.log(`- Formatted date using formatUTCDate: ${dueDate}`);
+        }
         
         // Determine status emoji
         let statusEmoji = "";
