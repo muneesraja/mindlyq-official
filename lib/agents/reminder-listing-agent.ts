@@ -189,7 +189,11 @@ export class ReminderListingAgent implements Agent {
         responseMessage += `\n\n...and ${totalReminders - maxReminders} more reminder(s).`;
       }
       
-      responseMessage += "\n\nTip: Modify by saying 'Change my [title] reminder to [time]'";
+      responseMessage += "\n\nTips:\n" +
+        "• Modify time: 'Change my meeting reminder to 5 PM'\n" +
+        "• Modify title: 'Update the title of my 3 PM reminder to team meeting'\n" +
+        "• Modify description: 'Change the description of my meeting reminder to prepare agenda first'";
+      
 
       return {
         success: true,

@@ -27,6 +27,7 @@ For reminder modification:
   "data": {
     "reminder_id": 123, // ID of the reminder to modify
     "new_title": "Updated meeting with John", // optional, only if title is changing
+    "new_description": "Prepare agenda and slides", // optional, only if description is changing
     "new_date": "2023-04-16", // optional, only if date is changing (YYYY-MM-DD)
     "new_time": "16:00", // optional, only if time is changing (HH:MM)
     "confirmation_message": "I've updated your reminder for the meeting with John to 4:00 PM on April 16, 2023."
@@ -275,26 +276,61 @@ export class ReminderModificationAgent implements Agent {
             updateData.title = parsed.data.new_title;
           }
           
+          if (parsed.data.new_description) {
+            updateData.description = parsed.data.new_description;
+          }
+          
           // Handle date and time updates
           if (parsed.data.new_date || parsed.data.new_time) {
+            console.log('Time modification requested:');
+            console.log(`- New date from request: ${parsed.data.new_date || 'not specified'}`);
+            console.log(`- New time from request: ${parsed.data.new_time || 'not specified'}`);
+            
             // Get current date and time from the reminder
             const currentDate = reminder.due_date;
+            console.log(`- Current reminder date in DB (UTC): ${currentDate.toISOString()}`);
+            
+            // Extract date and time components
             const currentDateStr = currentDate.toISOString().split('T')[0]; // YYYY-MM-DD
-            const currentTimeStr = currentDate.toTimeString().split(' ')[0].substring(0, 5); // HH:MM
+            
+            // For time, prefer using the existing recurrence_time if available
+            // since it's already in the user's local time format
+            let currentTimeStr;
+            if (reminder.recurrence_time) {
+              currentTimeStr = reminder.recurrence_time;
+              console.log(`- Current time from recurrence_time: ${currentTimeStr}`);
+            } else {
+              // Fall back to extracting from the UTC time
+              currentTimeStr = currentDate.toTimeString().split(' ')[0].substring(0, 5); // HH:MM
+              console.log(`- Current time extracted from UTC: ${currentTimeStr}`);
+            }
+            
+            console.log(`- Current date component: ${currentDateStr}`);
+            console.log(`- Current time component: ${currentTimeStr}`);
             
             // Use new values or fall back to current values
             const dateStr = parsed.data.new_date || currentDateStr;
             const timeStr = parsed.data.new_time || currentTimeStr;
+            console.log(`- Date string to use: ${dateStr}`);
+            console.log(`- Time string to use: ${timeStr}`);
+            
+            // ALWAYS store the recurrence_time when modifying a reminder
+            // This ensures the time is displayed correctly in the user's timezone
+            updateData.recurrence_time = timeStr;
+            console.log(`- Setting recurrence_time to: ${timeStr}`);
             
             // Create local date object based on user's timezone
-            const localDate = new Date(`${dateStr}T${timeStr}:00`);
+            const localDateStr = `${dateStr}T${timeStr}:00`;
+            console.log(`- Local date string: ${localDateStr}`);
+            
+            const localDate = new Date(localDateStr);
+            console.log(`- Local date object: ${localDate.toISOString()}`);
             
             // Convert to UTC for storage using our date-converter utility
             updateData.due_date = toUTC(localDate, userTimezone);
             
-            console.log(`Converting modified reminder time from ${userTimezone} to UTC:`);
-            console.log(`- Local time: ${localDate.toISOString()}`);
-            console.log(`- UTC time: ${updateData.due_date.toISOString()}`);
+            console.log(`- User timezone: ${userTimezone}`);
+            console.log(`- Final UTC time for storage: ${updateData.due_date.toISOString()}`);
           }
           
           // If we have date/time from the AI parser, use that for recurrence
@@ -329,10 +365,42 @@ export class ReminderModificationAgent implements Agent {
             }).format(updateData.due_date);
           }
           
-          const confirmationMessage = parsed.data.confirmation_message || 
-            (updateData.due_date ? 
-              `I've updated your reminder "${updatedReminder.title}" to ${userTimeString} (${userTimezone}).` : 
-              `I've updated your reminder "${updatedReminder.title}".`);
+          // Build a confirmation message based on what was updated
+          let confirmationMessage = parsed.data.confirmation_message;
+          
+          if (!confirmationMessage) {
+            const changedFields = [];
+            
+            if (updateData.title) {
+              changedFields.push("title");
+            }
+            
+            if (updateData.description) {
+              changedFields.push("description");
+            }
+            
+            if (updateData.due_date) {
+              changedFields.push("time");
+            }
+            
+            if (changedFields.length === 1) {
+              // Single field updated
+              if (changedFields[0] === "time") {
+                confirmationMessage = `I've updated your reminder "${updatedReminder.title}" to ${userTimeString} (${userTimezone}).`;
+              } else if (changedFields[0] === "title") {
+                confirmationMessage = `I've updated the title of your reminder to "${updatedReminder.title}".`;
+              } else if (changedFields[0] === "description") {
+                confirmationMessage = `I've updated the description of your reminder "${updatedReminder.title}".`;
+              }
+            } else {
+              // Multiple fields updated
+              confirmationMessage = `I've updated the ${changedFields.join(" and ")} of your reminder "${updatedReminder.title}"`;
+              if (updateData.due_date) {
+                confirmationMessage += `. The new time is ${userTimeString} (${userTimezone})`;
+              }
+              confirmationMessage += ".";
+            }
+          }
           
           return {
             success: true,

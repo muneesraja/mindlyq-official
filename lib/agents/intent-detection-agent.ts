@@ -27,10 +27,23 @@ IMPORTANT RULES:
 Possible intents:
 - "chat": General conversation, greetings, or small talk
 - "set_reminder": User wants to create a new reminder
-- "modify_reminder": User wants to change an existing reminder
+- "modify_reminder": User wants to change an existing reminder (time, title, or description)
 - "delete_reminder": User wants to remove an existing reminder
 - "list_reminders": User wants to see their reminders
 - "set_timezone": User is mentioning their location or timezone (e.g., "I'm from India", "My timezone is EST", "I live in New York")
+
+For "modify_reminder" intent, look for phrases like:
+- "change my reminder"
+- "update my reminder"
+- "modify my reminder"
+- "reschedule my reminder"
+- "move my reminder"
+- "change the time of my reminder"
+- "change the title of my reminder"
+- "change the description of my reminder"
+- "update the title"
+- "update the description"
+- "rename my reminder"
 
 Response format:
 {
