@@ -2,7 +2,8 @@ import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/ge
 import { Agent, AgentResponse } from "./agent-interface";
 import { getConversationState, clearConversationState } from "../conversation-state";
 import { prisma } from "../db";
-import { getUserTimezone } from "../timezone-utils";
+import { getUserTimezone } from "../utils/date-converter";
+import { formatUTCDate } from "../utils/date-converter";
 
 // Initialize Google AI
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
@@ -135,17 +136,12 @@ export class ReminderDeletionAgent implements Agent {
       // Get the current time
       const currentTime = new Date();
       
-      // Format the current time for the prompt
-      const formattedTime = new Intl.DateTimeFormat('en-US', {
-        timeZone: userTimezone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true,
-        timeZoneName: 'short'
-      }).format(currentTime);
+      // Format the current time for the prompt using our date-converter utility
+      const formattedTime = formatUTCDate(
+        currentTime,
+        userTimezone,
+        'MM/dd/yyyy hh:mm a zzz'
+      );
       
       // Create the prompt
       const prompt = REMINDER_DELETION_PROMPT
@@ -220,15 +216,11 @@ export class ReminderDeletionAgent implements Agent {
           
           const formattedMatches = parsed.data.matches.map((match, index) => {
             const date = new Date(match.due_date);
-            const formattedDate = new Intl.DateTimeFormat('en-US', {
-              timeZone: userTimezone,
-              year: 'numeric',
-              month: 'short',
-              day: 'numeric',
-              hour: 'numeric',
-              minute: '2-digit',
-              hour12: true
-            }).format(date);
+            const formattedDate = formatUTCDate(
+              date,
+              userTimezone,
+              'MMM d, yyyy h:mm aa'
+            );
             
             return `${index + 1}. "${match.title}" - ${formattedDate}`;
           });

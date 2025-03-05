@@ -1,8 +1,9 @@
 import { Agent, AgentResponse } from "./agent-interface";
-import { detectTimezoneFromLocation, setUserTimezone } from "../timezone-utils";
+import { setUserTimezone, detectTimezoneFromLocation } from "../utils/date-converter";
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { getConversationState, updateReminderData } from "../conversation-state";
 import { ReminderCreationAgent } from "./reminder-creation-agent";
+import { formatUTCDate } from "../utils/date-converter";
 
 // Initialize Google AI
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
@@ -145,15 +146,13 @@ export class TimezoneAgent implements Agent {
    * @returns A friendly response
    */
   private formatTimezoneResponse(timezone: string, location: string): string {
-    // Get current time in the timezone
+    // Get current time in the timezone using our date-converter utility
     const now = new Date();
-    const timeInZone = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      hour: 'numeric',
-      minute: 'numeric',
-      hour12: true,
-      timeZoneName: 'short'
-    }).format(now);
+    const timeInZone = formatUTCDate(
+      now,
+      timezone,
+      'h:mm a zzz'
+    );
     
     // Extract the timezone abbreviation (like EST, IST, etc.)
     const tzAbbreviation = timeInZone.split(' ').pop();

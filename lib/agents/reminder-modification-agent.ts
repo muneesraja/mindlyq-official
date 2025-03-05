@@ -3,7 +3,8 @@ import { Agent, AgentResponse } from "./agent-interface";
 import { getConversationState, updateConversationState, clearConversationState } from "../conversation-state";
 import { parseDateTime } from "../ai-date-parser";
 import { prisma } from "../db";
-import { getUserTimezone, convertToUTC } from "../timezone-utils";
+import { getUserTimezone } from "../utils/date-converter";
+import { toUTC, formatUTCDate } from "../utils/date-converter";
 
 // Initialize Google AI
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
@@ -147,17 +148,12 @@ export class ReminderModificationAgent implements Agent {
       // Get the current time
       const currentTime = new Date();
       
-      // Format the current time for the prompt
-      const formattedTime = new Intl.DateTimeFormat('en-US', {
-        timeZone: userTimezone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true,
-        timeZoneName: 'short'
-      }).format(currentTime);
+      // Format the current time for the prompt using our date-converter utility
+      const formattedTime = formatUTCDate(
+        currentTime,
+        userTimezone,
+        'MM/dd/yyyy hh:mm a zzz'
+      );
       
       // Create the prompt
       const prompt = REMINDER_MODIFICATION_PROMPT
@@ -232,15 +228,11 @@ export class ReminderModificationAgent implements Agent {
           
           const formattedMatches = parsed.data.matches.map((match, index) => {
             const date = new Date(match.due_date);
-            const formattedDate = new Intl.DateTimeFormat('en-US', {
-              timeZone: userTimezone,
-              year: 'numeric',
-              month: 'short',
-              day: 'numeric',
-              hour: 'numeric',
-              minute: '2-digit',
-              hour12: true
-            }).format(date);
+            const formattedDate = formatUTCDate(
+              date,
+              userTimezone,
+              'MMM d, yyyy h:mm aa'
+            );
             
             return `${index + 1}. "${match.title}" - ${formattedDate}`;
           });
@@ -297,8 +289,8 @@ export class ReminderModificationAgent implements Agent {
             // Create local date object based on user's timezone
             const localDate = new Date(`${dateStr}T${timeStr}:00`);
             
-            // Convert to UTC for storage
-            updateData.due_date = convertToUTC(localDate, userTimezone);
+            // Convert to UTC for storage using our date-converter utility
+            updateData.due_date = toUTC(localDate, userTimezone);
             
             console.log(`Converting modified reminder time from ${userTimezone} to UTC:`);
             console.log(`- Local time: ${localDate.toISOString()}`);

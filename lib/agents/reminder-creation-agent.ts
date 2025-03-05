@@ -3,7 +3,8 @@ import { Agent, AgentResponse } from "./agent-interface";
 import { getConversationState, updateConversationState, updateReminderData, clearConversationState } from "../conversation-state";
 import { parseDateTime } from "../ai-date-parser";
 import { prisma } from "../db";
-import { getUserTimezone, convertToUTC } from "../timezone-utils";
+import { getUserTimezone } from "../utils/date-converter";
+import { toUTC, fromUTC, formatUTCDate } from "../utils/date-converter";
 
 // Initialize Google AI
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
@@ -251,8 +252,8 @@ export class ReminderCreationAgent implements Agent {
           // First create a local date based on the user's input
           const localDate = new Date(`${date}T${time}:00`);
           
-          // Convert the local date to UTC based on the user's timezone
-          const dueDate = convertToUTC(localDate, userTimezone);
+          // Convert the local date to UTC based on the user's timezone using our new utility
+          const dueDate = toUTC(localDate, userTimezone);
           
           console.log(`Converting reminder time from ${userTimezone} to UTC:`);
           console.log(`- Local time: ${localDate.toISOString()}`);
@@ -296,21 +297,21 @@ export class ReminderCreationAgent implements Agent {
           // Clear conversation state since we've completed the reminder
           await clearConversationState(userId);
           
-          // Format the confirmation message with the user's timezone
-          const userTimeString = new Intl.DateTimeFormat('en-US', {
-            timeZone: userTimezone,
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit',
-            hour12: true
-          }).format(localDate);
+          // Format the confirmation message with the user's timezone using our new utility
+          const userTimeString = formatUTCDate(
+            finalDueDate,
+            userTimezone,
+            'MMMM d, yyyy h:mm a'
+          );
           
           return {
             success: true,
             message: confirmation_message || `I've set a reminder for "${title || "Untitled reminder"}" on ${userTimeString} (${userTimezone}).`,
-            data: reminder
+            data: {
+              ...reminder,
+              // Include formatted date for display
+              formattedDueDate: userTimeString
+            }
           };
         }
         

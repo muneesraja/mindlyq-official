@@ -1,7 +1,8 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { Agent, AgentResponse } from "./agent-interface";
 import { getConversationState, updateConversationState } from "../conversation-state";
-import { getUserTimezone } from "../timezone-utils";
+import { getUserTimezone } from "../utils/date-converter";
+import { formatUTCDate } from "../utils/date-converter";
 
 // Initialize Google AI
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
@@ -59,17 +60,12 @@ export class ChatAgent implements Agent {
       // Get the current time
       const currentTime = new Date();
       
-      // Format the current time for the prompt
-      const formattedTime = new Intl.DateTimeFormat('en-US', {
-        timeZone: userTimezone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true,
-        timeZoneName: 'short'
-      }).format(currentTime);
+      // Format the current time for the prompt using our date-converter utility
+      const formattedTime = formatUTCDate(
+        currentTime,
+        userTimezone,
+        'MM/dd/yyyy hh:mm a zzz'
+      );
       
       // Create the prompt
       const prompt = CHAT_PROMPT

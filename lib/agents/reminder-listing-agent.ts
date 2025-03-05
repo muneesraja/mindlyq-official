@@ -1,7 +1,8 @@
 import { Agent, AgentResponse } from "./agent-interface";
 import { prisma } from "../db";
 import { formatDateForHumans, formatRecurrenceForHumans } from "../ai-date-parser";
-import { getUserTimezone } from "../timezone-utils";
+import { getUserTimezone } from "../utils/date-converter";
+import { fromUTC, formatUTCDate } from "../utils/date-converter";
 
 /**
  * Agent responsible for listing reminders
@@ -103,23 +104,16 @@ export class ReminderListingAgent implements Agent {
       
       const formattedReminders = displayReminders.map((reminder, index) => {
         const date = new Date(reminder.due_date);
-        // Format date more concisely
-        const dateOptions: Intl.DateTimeFormatOptions = {
-          timeZone: userTimezone,
-          month: 'short',
-          day: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true
-        };
         
-        // Only add year if it's not the current year
+        // Format date using our date-converter utility
+        // Determine if we need to include the year
         const currentYear = new Date().getFullYear();
-        if (date.getFullYear() !== currentYear) {
-          dateOptions.year = 'numeric';
-        }
+        const reminderYear = date.getFullYear();
+        const formatString = reminderYear !== currentYear ? 
+          'MMM d, yyyy h:mm aa' : 
+          'MMM d h:mm aa';
         
-        const dueDate = new Intl.DateTimeFormat('en-US', dateOptions).format(date);
+        const dueDate = formatUTCDate(date, userTimezone, formatString);
         
         // Shorter recurrence description
         let recurrenceInfo = "";

@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
-import { getUserTimezone } from './timezone-utils';
+import { getUserTimezone, formatUTCDate } from './utils/date-converter';
 
 // Initialize Google AI
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
@@ -100,17 +100,12 @@ export async function parseDateTime(text: string, userId?: string): Promise<Date
     // Get user timezone or use UTC as fallback
     const timezone = userId ? await getUserTimezone(userId) : 'Etc/UTC';
     
-    // Format the current time for the prompt
-    const formattedTime = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-      timeZoneName: 'short'
-    }).format(currentTime);
+    // Format the current time for the prompt using date-fns
+    const formattedTime = formatUTCDate(
+      currentTime,
+      timezone,
+      'MM/dd/yyyy hh:mm a zzz'
+    );
     
     // Create the prompt
     const prompt = DATETIME_SYSTEM_PROMPT.replace("{current_time}", formattedTime);
@@ -200,16 +195,11 @@ export async function parseDateTime(text: string, userId?: string): Promise<Date
  * @returns A human-readable date string
  */
 export function formatDateForHumans(date: Date, timezone: string = 'Etc/UTC'): string {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: 'numeric',
-    hour12: true
-  }).format(date);
+  return formatUTCDate(
+    date,
+    timezone,
+    'EEEE, MMMM d, yyyy h:mm a'
+  );
 }
 
 /**
