@@ -77,6 +77,7 @@ interface ReminderModificationResponse {
   data?: {
     reminder_id?: number;
     new_title?: string;
+    new_description?: string;
     new_date?: string;
     new_time?: string;
     confirmation_message?: string;
@@ -383,7 +384,10 @@ export class ReminderModificationAgent implements Agent {
               changedFields.push("time");
             }
             
-            if (changedFields.length === 1) {
+            if (changedFields.length === 0) {
+              // No fields were actually updated
+              confirmationMessage = `No changes were made to your reminder "${updatedReminder.title}".`;
+            } else if (changedFields.length === 1) {
               // Single field updated
               if (changedFields[0] === "time") {
                 confirmationMessage = `I've updated your reminder "${updatedReminder.title}" to ${userTimeString} (${userTimezone}).`;
@@ -400,6 +404,11 @@ export class ReminderModificationAgent implements Agent {
               }
               confirmationMessage += ".";
             }
+          }
+          
+          // Ensure confirmationMessage is never undefined
+          if (!confirmationMessage) {
+            confirmationMessage = `Your reminder "${updatedReminder.title}" has been updated.`;
           }
           
           return {
