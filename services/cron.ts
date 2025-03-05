@@ -1,8 +1,14 @@
 import cron from 'node-cron';
 import { prisma } from '../lib/db';
 import twilio from 'twilio';
-import { getUserTimezone } from '../lib/timezone-utils';
 import { Reminder } from '@prisma/client';
+import { 
+  getUserTimezone,
+  getCurrentTimeInTimezone,
+  formatDateInTimezone,
+  formatDateForUser,
+  isTimeMatching
+} from '../lib/time-utils';
 
 // Initialize Twilio client
 const twilioClient = twilio(
@@ -10,34 +16,9 @@ const twilioClient = twilio(
   process.env.TWILIO_AUTH_TOKEN
 );
 
-/**
- * Helper function to get current time in the specified timezone
- * @param timezone The timezone to convert to
- * @returns Date object representing current time in the specified timezone
- */
-function getCurrentTimeInTimezone(timezone: string): Date {
-  const now = new Date();
-  const tzString = now.toLocaleString('en-US', { timeZone: timezone });
-  return new Date(tzString);
-}
+// We've moved this function to time-utils.ts
 
-/**
- * Helper function to format date in the specified timezone
- * @param date The date to format
- * @param timezone The timezone to use for formatting
- * @returns Formatted date string in the specified timezone
- */
-function formatInTimezone(date: Date, timezone: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date);
-}
+// We've moved this function to time-utils.ts
 
 /**
  * Check if a reminder is due based on user's local time
@@ -53,17 +34,8 @@ async function isReminderDue(reminder: Reminder, userLocalTime: Date, userTimezo
     
     // Check if the reminder has a recurrence_time set (used for immediate reminders)
     if (reminder.recurrence_time) {
-      // Extract hours and minutes from recurrence_time (format: HH:MM)
-      const [hours, minutes] = reminder.recurrence_time.split(':').map(Number);
-      
-      // Get current time components
-      const currentHours = userLocalTime.getHours();
-      const currentMinutes = userLocalTime.getMinutes();
-      
       // Check if current time matches the recurrence_time (within 1 minute)
-      const timeMatches = 
-        (currentHours === hours && Math.abs(currentMinutes - minutes) <= 1) ||
-        (currentHours === hours + 1 && minutes === 59 && currentMinutes === 0);
+      const timeMatches = isTimeMatching(reminder.recurrence_time, userLocalTime);
       
       // For immediate reminders, we check both the due_date and the recurrence_time
       if (timeMatches) {
@@ -78,29 +50,22 @@ async function isReminderDue(reminder: Reminder, userLocalTime: Date, userTimezo
   
   // For daily reminders
   if (reminder.recurrence_type === 'daily') {
-    const reminderTime = reminder.recurrence_time;
-    const currentTime = userLocalTime.toLocaleTimeString('en-US', { 
-      hour: '2-digit', 
-      minute: '2-digit',
-      hour12: false 
-    });
-    
-    // Check if current time matches recurrence time (within 1 minute)
-    return reminderTime === currentTime;
+    // Check if the reminder has a recurrence_time
+    if (reminder.recurrence_time) {
+      // Check if current time matches the recurrence_time (within 1 minute)
+      return isTimeMatching(reminder.recurrence_time, userLocalTime);
+    }
   }
   
   // For weekly reminders
   if (reminder.recurrence_type === 'weekly') {
     const currentDay = userLocalTime.getDay();
-    const reminderTime = reminder.recurrence_time;
-    const currentTime = userLocalTime.toLocaleTimeString('en-US', { 
-      hour: '2-digit', 
-      minute: '2-digit',
-      hour12: false 
-    });
     
-    // Check if current day is in recurrence days and time matches
-    return reminder.recurrence_days.includes(currentDay) && reminderTime === currentTime;
+    // Check if today is one of the recurrence days
+    if (reminder.recurrence_days.includes(currentDay) && reminder.recurrence_time) {
+      // Check if current time matches the recurrence_time (within 1 minute)
+      return isTimeMatching(reminder.recurrence_time, userLocalTime);
+    }
   }
   
   return false;
@@ -163,10 +128,9 @@ export async function processDueReminders(): Promise<{ success: boolean; process
         const userTimezone = await getUserTimezone(reminder.user_id);
         
         // Get user's phone number from user table
-        // Note: Assuming there's a User model with a phone field
+        // We're just validating that the user exists in our system
         const user = await prisma.userPreference.findUnique({
-          where: { userId: reminder.user_id },
-          select: { userId: true }
+          where: { userId: reminder.user_id }
         });
         
         if (!user) {
@@ -180,7 +144,7 @@ export async function processDueReminders(): Promise<{ success: boolean; process
         
         // Format the reminder date in user's timezone
         const reminderDate = new Date(reminder.due_date);
-        const formattedDate = formatInTimezone(reminderDate, userTimezone);
+        const formattedDate = formatDateForUser(reminderDate, userTimezone);
         
         // Send SMS reminder
         const message = `MindlyQ Reminder: ${reminder.title} ${formattedDate}`;
@@ -191,8 +155,8 @@ export async function processDueReminders(): Promise<{ success: boolean; process
         if (process.env.TWILIO_PHONE_NUMBER) {
           await twilioClient.messages.create({
             body: message,
-            from: process.env.TWILIO_PHONE_NUMBER,
-            to: phone
+            from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
+            to: `whatsapp:${phone}`
           });
         } else {
           console.log('Skipping SMS send - TWILIO_PHONE_NUMBER not configured');
