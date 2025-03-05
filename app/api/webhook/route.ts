@@ -61,9 +61,12 @@ export async function POST(req: Request) {
       const messageParts = agentManager.splitLongMessage(responseMessage, MAX_MESSAGE_LENGTH);
       
       if (messageParts.length === 1) {
+        // Ensure 'from' has the 'whatsapp:' prefix
+        const toNumber = from.startsWith('whatsapp:') ? from : `whatsapp:${from}`;
+        
         // Message is within limits, send as is
         console.log("Sending single message:", {
-          to: from,
+          to: toNumber,
           from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
           body: responseMessage
         });
@@ -72,7 +75,7 @@ export async function POST(req: Request) {
         const twilioResponse = await twilioClient.messages.create({
           body: responseMessage,
           from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
-          to: from,
+          to: toNumber,
         });
         
         console.log("Twilio response sent:", twilioResponse.sid);
@@ -86,10 +89,13 @@ export async function POST(req: Request) {
           
           console.log(`Sending part ${i+1} of ${messageParts.length}`);
           
+          // Ensure 'from' has the 'whatsapp:' prefix
+          const toNumber = from.startsWith('whatsapp:') ? from : `whatsapp:${from}`;
+          
           const twilioResponse = await twilioClient.messages.create({
             body: part + partNumber,
             from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
-            to: from,
+            to: toNumber,
           });
           
           console.log(`Part ${i+1} sent, SID:`, twilioResponse.sid);

@@ -163,8 +163,8 @@ export async function processDueReminders(): Promise<{ success: boolean; process
         const reminderDate = new Date(reminder.due_date);
         const formattedDate = formatUTCDate(reminderDate, userTimezone, 'MMMM d, yyyy h:mm a');
         
-        // Send SMS reminder
-        const message = `MindlyQ Reminder: ${reminder.title} ${formattedDate}`;
+        // Create a structured reminder message with bell emoji using the format from the database
+        const message = `🔔 Reminder: ${reminder.title}\n\n${reminder.description || 'No description provided'}`;
         
         console.log(`Sending reminder to ${phone}: ${message}`);
         

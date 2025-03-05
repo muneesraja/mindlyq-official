@@ -44,24 +44,38 @@ export class ReminderListingAgent implements Agent {
           }
         });
       } else if (filter === "active") {
-        // Get current date in the user's timezone
-        const now = new Date();
+        console.log("Listing active reminders for user:", userId);
         
-        reminders = await prisma.reminder.findMany({
+        // Get current date in UTC
+        const nowUTC = new Date();
+        
+        // Convert to user's timezone for proper comparison
+        const userTimezoneNow = fromUTC(nowUTC, userTimezone);
+        console.log("Current time in user timezone:", userTimezoneNow.toISOString());
+        
+        // Fetch all active reminders regardless of due date
+        const allReminders = await prisma.reminder.findMany({
           where: {
             user_id: userId,
-            status: "active",
-            OR: [
-              // Future reminders
-              { due_date: { gt: now } },
-              // Recurring reminders
-              { recurrence_type: { not: "none" } }
-            ],
+            status: "active", // Only get active reminders
             ...(searchTerms ? { title: { contains: searchTerms, mode: 'insensitive' } } : {})
           },
           orderBy: {
             due_date: 'asc'
           }
+        });
+        
+        console.log(`Found ${allReminders.length} active reminders in database`);
+        
+        // Include all active reminders - don't filter by date
+        // This ensures future reminders are shown
+        reminders = allReminders;
+        
+        // Log details of each reminder for debugging
+        allReminders.forEach((reminder, index) => {
+          const reminderDate = new Date(reminder.due_date);
+          const reminderLocalDate = fromUTC(reminderDate, userTimezone);
+          console.log(`Reminder ${index + 1}: "${reminder.title}" - Due: ${reminderLocalDate.toISOString()} - Status: ${reminder.status} - Recurrence: ${reminder.recurrence_type || 'none'}`);
         });
       } else if (filter === "pending") {
         reminders = await prisma.reminder.findMany({
@@ -115,13 +129,33 @@ export class ReminderListingAgent implements Agent {
         
         const dueDate = formatUTCDate(date, userTimezone, formatString);
         
-        // Shorter recurrence description
-        let recurrenceInfo = "";
+        // Determine status emoji
+        let statusEmoji = "";
         if (reminder.recurrence_type && reminder.recurrence_type !== "none") {
-          recurrenceInfo = " (recurring)";
+          statusEmoji = "🔄 "; // Recurring
+        } else {
+          const nowUTC = new Date();
+          const userTimezoneNow = fromUTC(nowUTC, userTimezone);
+          const reminderLocalDate = fromUTC(date, userTimezone);
+          
+          // Check if the reminder is due today
+          const isToday = (
+            reminderLocalDate.getDate() === userTimezoneNow.getDate() &&
+            reminderLocalDate.getMonth() === userTimezoneNow.getMonth() &&
+            reminderLocalDate.getFullYear() === userTimezoneNow.getFullYear()
+          );
+          
+          if (isToday) {
+            statusEmoji = "⏰ "; // Due today
+          } else {
+            statusEmoji = "📅 "; // Future date
+          }
         }
         
-        return `${index + 1}. "${reminder.title}" - ${dueDate}${recurrenceInfo}`;
+        // Format description if available
+        const description = reminder.description ? `\n   ${reminder.description}` : "";
+        
+        return `${index + 1}. ${statusEmoji}"${reminder.title}" - ${dueDate}${description}`;
       });
 
       responseMessage += formattedReminders.join("\n");
