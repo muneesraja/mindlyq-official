@@ -3,12 +3,11 @@ import { prisma } from '../lib/db';
 import twilio from 'twilio';
 import { Reminder } from '@prisma/client';
 import { 
-  toUTC,
-  fromUTC,
   formatUTCDate,
   isTimeMatching,
   getUserTimezone
 } from '../lib/utils/date-converter';
+import { formatDateForDisplay } from '../lib/utils/date-calculator';
 
 // Initialize Twilio client
 const twilioClient = twilio(
@@ -21,70 +20,102 @@ const twilioClient = twilio(
 // We've moved this function to time-utils.ts
 
 /**
- * Check if a reminder is due based on user's local time
+ * Check if a reminder is due based on current UTC time
  * @param reminder The reminder to check
- * @param userLocalTime The current time in user's timezone
- * @param userTimezone The user's timezone
+ * @param currentUTCTime The current time in UTC
  * @returns True if the reminder is due, false otherwise
  */
-async function isReminderDue(reminder: Reminder, userLocalTime: Date, userTimezone: string): Promise<boolean> {
-  // For one-time reminders
-  if (reminder.recurrence_type === 'none' || !reminder.recurrence_type) {
-    // Get the reminder date in UTC
-    const reminderDate = new Date(reminder.due_date);
+async function isReminderDue(reminder: Reminder, currentUTCTime: Date): Promise<boolean> {
+  try {
+    // For one-time reminders
+    if (reminder.recurrence_type === 'none' || !reminder.recurrence_type) {
+      // Get the reminder date in UTC (it's already stored in UTC)
+      const reminderDate = new Date(reminder.due_date);
+      
+      // Check if the reminder has a recurrence_time set (used for time-specific reminders)
+      if (reminder.recurrence_time) {
+        // Check if the reminder date is today in UTC
+        const isToday = (
+          reminderDate.getUTCDate() === currentUTCTime.getUTCDate() &&
+          reminderDate.getUTCMonth() === currentUTCTime.getUTCMonth() &&
+          reminderDate.getUTCFullYear() === currentUTCTime.getUTCFullYear()
+        );
+        
+        // Check if current time matches the recurrence_time (within 1 minute)
+        // recurrence_time is stored in UTC
+        const timeMatches = isTimeMatching(reminder.recurrence_time, currentUTCTime);
+        
+        // For time-specific reminders, we check that it's both today AND the time matches
+        if (isToday && timeMatches) {
+          console.log(`Time-specific reminder detected: ${reminder.id} with time ${reminder.recurrence_time}`);
+          return true;
+        }
+        
+        // If it has a specific time but the time doesn't match yet, don't trigger it
+        if (isToday && !timeMatches) {
+          return false;
+        }
+      }
+      
+      // Standard due_date check - simple UTC comparison
+      return reminderDate <= currentUTCTime && reminder.status === 'pending';
+    }
     
-    // Convert the UTC reminder date to user's local timezone for comparison
-    const reminderLocalDate = fromUTC(reminderDate, userTimezone);
+    // For daily reminders
+    if (reminder.recurrence_type === 'daily') {
+      // Check if the reminder has a recurrence_time
+      if (reminder.recurrence_time) {
+        // Check if current time matches the recurrence_time (within 1 minute)
+        return isTimeMatching(reminder.recurrence_time, currentUTCTime);
+      }
+    }
     
-    // Check if the reminder has a recurrence_time set (used for time-specific reminders)
-    if (reminder.recurrence_time) {
-      // Check if the reminder date is today
-      const isToday = (
-        reminderLocalDate.getDate() === userLocalTime.getDate() &&
-        reminderLocalDate.getMonth() === userLocalTime.getMonth() &&
-        reminderLocalDate.getFullYear() === userLocalTime.getFullYear()
+    // For weekly reminders
+    if (reminder.recurrence_type === 'weekly') {
+      // Get the current day of week in UTC
+      const currentDay = currentUTCTime.getUTCDay();
+      
+      // Check if today is one of the recurrence days
+      if (reminder.recurrence_days && reminder.recurrence_days.includes(currentDay) && reminder.recurrence_time) {
+        // Check if current time matches the recurrence_time (within 1 minute)
+        return isTimeMatching(reminder.recurrence_time, currentUTCTime);
+      }
+    }
+    
+    // For monthly reminders
+    if (reminder.recurrence_type === 'monthly') {
+      // Check if today is the same day of the month as the reminder's due date
+      const reminderDate = new Date(reminder.due_date);
+      
+      const isSameDayOfMonth = reminderDate.getUTCDate() === currentUTCTime.getUTCDate();
+      
+      if (isSameDayOfMonth && reminder.recurrence_time) {
+        // Check if current time matches the recurrence_time (within 1 minute)
+        return isTimeMatching(reminder.recurrence_time, currentUTCTime);
+      }
+    }
+    
+    // For yearly reminders
+    if (reminder.recurrence_type === 'yearly') {
+      // Check if today is the same day and month as the reminder's due date
+      const reminderDate = new Date(reminder.due_date);
+      
+      const isSameDayAndMonth = (
+        reminderDate.getUTCDate() === currentUTCTime.getUTCDate() &&
+        reminderDate.getUTCMonth() === currentUTCTime.getUTCMonth()
       );
       
-      // Check if current time matches the recurrence_time (within 1 minute)
-      const timeMatches = isTimeMatching(reminder.recurrence_time, userLocalTime);
-      
-      // For time-specific reminders, we check that it's both today AND the time matches
-      if (isToday && timeMatches) {
-        console.log(`Time-specific reminder detected: ${reminder.id} with time ${reminder.recurrence_time}`);
-        return true;
-      }
-      
-      // If it has a specific time but the time doesn't match yet, don't trigger it
-      if (isToday && !timeMatches) {
-        return false;
+      if (isSameDayAndMonth && reminder.recurrence_time) {
+        // Check if current time matches the recurrence_time (within 1 minute)
+        return isTimeMatching(reminder.recurrence_time, currentUTCTime);
       }
     }
     
-    // Standard due_date check - compare dates in the same timezone context
-    return reminderLocalDate <= userLocalTime && reminder.status === 'pending';
+    return false;
+  } catch (error) {
+    console.error(`Error checking if reminder ${reminder.id} is due:`, error);
+    return false;
   }
-  
-  // For daily reminders
-  if (reminder.recurrence_type === 'daily') {
-    // Check if the reminder has a recurrence_time
-    if (reminder.recurrence_time) {
-      // Check if current time matches the recurrence_time (within 1 minute)
-      return isTimeMatching(reminder.recurrence_time, userLocalTime);
-    }
-  }
-  
-  // For weekly reminders
-  if (reminder.recurrence_type === 'weekly') {
-    const currentDay = userLocalTime.getDay();
-    
-    // Check if today is one of the recurrence days
-    if (reminder.recurrence_days.includes(currentDay) && reminder.recurrence_time) {
-      // Check if current time matches the recurrence_time (within 1 minute)
-      return isTimeMatching(reminder.recurrence_time, userLocalTime);
-    }
-  }
-  
-  return false;
 }
 
 /**
@@ -105,29 +136,27 @@ export async function processDueReminders(): Promise<{ success: boolean; process
       }
     });
     
-    // Process each reminder in its user's timezone
+    // Process reminders directly in UTC
     const dueReminders: Reminder[] = [];
     
     console.log(`Found ${activeReminders.length} active reminders to check`);
     
     for (const reminder of activeReminders) {
-      // Get user's timezone preference
+      // Get user's timezone preference (only for display purposes)
       const userTimezone = await getUserTimezone(reminder.user_id);
-      
-      // Get current time in user's timezone using our date converter utility
-      const userLocalTime = fromUTC(now, userTimezone);
       
       console.log(`\nChecking reminder: ${reminder.id}`);
       console.log(`- Title: ${reminder.title}`);
-      console.log(`- Due date: ${reminder.due_date.toISOString()}`);
-      console.log(`- Formatted due date: ${formatUTCDate(reminder.due_date, userTimezone)}`);
+      console.log(`- Due date (UTC): ${reminder.due_date.toISOString()}`);
+      console.log(`- Formatted due date (User TZ): ${formatUTCDate(reminder.due_date, userTimezone)}`);
       console.log(`- Recurrence type: ${reminder.recurrence_type || 'none'}`);
-      console.log(`- Recurrence time: ${reminder.recurrence_time || 'N/A'}`);
+      console.log(`- Recurrence time (UTC): ${reminder.recurrence_time || 'N/A'}`);
+      console.log(`- Recurrence days: ${reminder.recurrence_days ? JSON.stringify(reminder.recurrence_days) : 'N/A'}`);
       console.log(`- User timezone: ${userTimezone}`);
-      console.log(`- Current time in user timezone: ${formatUTCDate(userLocalTime, userTimezone)}`);
+      console.log(`- Current time (UTC): ${now.toISOString()}`);
       
-      // Check if the reminder is due based on user's local time
-      const isDue = await isReminderDue(reminder, userLocalTime, userTimezone);
+      // Check if the reminder is due based on UTC time
+      const isDue = await isReminderDue(reminder, now);
       
       console.log(`- Is due: ${isDue}`);
       
@@ -207,7 +236,16 @@ export async function processDueReminders(): Promise<{ success: boolean; process
  */
 export function startCronJobs(): void {
   console.log("Starting cron jobs...");
+  
+  // Schedule the job to run every minute
   cron.schedule('* * * * *', async () => {
-    await processDueReminders();
+    try {
+      console.log("Running scheduled reminder check...");
+      await processDueReminders();
+    } catch (error) {
+      console.error("Error in cron job:", error);
+    }
   });
+  
+  console.log("Cron jobs started successfully");
 }

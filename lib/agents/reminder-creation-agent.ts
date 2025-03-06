@@ -1,10 +1,11 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { Agent, AgentResponse } from "./agent-interface";
 import { getConversationState, updateConversationState, updateReminderData, clearConversationState } from "../conversation-state";
-import { parseDateTime } from "../ai-date-parser";
+import { parseDateTime, formatDateForHumans, formatRecurrenceForHumans } from "../ai-date-parser";
 import { prisma } from "../db";
 import { getUserTimezone } from "../utils/date-converter";
 import { toUTC, fromUTC, formatUTCDate } from "../utils/date-converter";
+import { calculateDate, formatDateForDisplay, TimeExpression } from "../utils/date-calculator";
 
 // Initialize Google AI
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
@@ -110,7 +111,7 @@ export class ReminderCreationAgent implements Agent {
       }
       
       // First, try to parse date and time from the message
-      const dateTimeResult = await parseDateTime(message);
+      const dateTimeResult = await parseDateTime(message, userId);
       
       // Get conversation state
       const conversationState = await getConversationState(userId);
@@ -129,7 +130,7 @@ export class ReminderCreationAgent implements Agent {
       if (dateTimeResult.success && dateTimeResult.date) {
         const date = dateTimeResult.date;
         
-        // Format date and time
+        // Format date and time using our date-calculator module
         const dateStr = date.toISOString().split('T')[0]; // YYYY-MM-DD
         const timeStr = date.toTimeString().split(' ')[0].substring(0, 5); // HH:MM
         
@@ -142,6 +143,13 @@ export class ReminderCreationAgent implements Agent {
           knownInfo.recurrenceType = dateTimeResult.recurrenceType;
           knownInfo.recurrenceDays = dateTimeResult.recurrenceDays;
           knownInfo.recurrenceTime = dateTimeResult.recurrenceTime;
+          
+          // Add human-readable recurrence description
+          knownInfo.recurrenceDescription = formatRecurrenceForHumans(
+            dateTimeResult.recurrenceType || 'daily',
+            dateTimeResult.recurrenceDays || [],
+            dateTimeResult.recurrenceTime || '09:00'
+          );
         }
       }
       
@@ -168,7 +176,7 @@ export class ReminderCreationAgent implements Agent {
       
       // Generate AI response using Gemini Pro for detailed processing
       const model = genAI.getGenerativeModel({ 
-        model: "gemini-2.0-pro-exp",
+        model: "gemini-2.0-flash-exp",
         safetySettings: [
           {
             category: HarmCategory.HARM_CATEGORY_HARASSMENT,
@@ -248,16 +256,43 @@ export class ReminderCreationAgent implements Agent {
             };
           }
           
-          // Create the reminder in the database
-          // First create a local date based on the user's input
-          const localDate = new Date(`${date}T${time}:00`);
+          // Create the reminder in the database using our date-calculator module
+          // First, create a TimeExpression for the specific date and time
+          const timeExpression: TimeExpression = {
+            type: 'specific_date',
+            value: date,
+            date: date,
+            time: time
+          };
           
-          // Convert the local date to UTC based on the user's timezone using our new utility
-          const dueDate = toUTC(localDate, userTimezone);
+          // Calculate the actual date using date-fns
+          const calculationResult = calculateDate(timeExpression, new Date(), userTimezone);
+          
+          // Use the calculated date if successful, otherwise fall back to manual conversion
+          let dueDate: Date;
+          
+          if (calculationResult.success && calculationResult.date) {
+            dueDate = calculationResult.date;
+            console.log(`Date calculated using date-calculator module: ${dueDate.toISOString()}`);
+          } else {
+            // Fallback to manual conversion
+            const localDate = new Date(`${date}T${time}:00`);
+            dueDate = toUTC(localDate, userTimezone);
+            console.log(`Date calculated using manual conversion: ${dueDate.toISOString()}`);
+          }
           
           console.log(`Converting reminder time from ${userTimezone} to UTC:`);
-          console.log(`- Local time: ${localDate.toISOString()}`);
+          console.log(`- Original date string: ${date}T${time}:00`);
           console.log(`- UTC time: ${dueDate.toISOString()}`);
+          console.log(`- User timezone: ${userTimezone}`);
+          
+          // Log any date shifts for debugging
+          const localDate = new Date(`${date}T${time}:00`);
+          const localDateDay = localDate.getDate();
+          const utcDateDay = dueDate.getUTCDate();
+          if (localDateDay !== utcDateDay) {
+            console.log(`WARNING: Date day shifted from ${localDateDay} to ${utcDateDay} during timezone conversion`);
+          }
           
           // Check if this is a recurring reminder
           const isRecurring = knownInfo.isRecurring || false;
@@ -297,12 +332,8 @@ export class ReminderCreationAgent implements Agent {
           // Clear conversation state since we've completed the reminder
           await clearConversationState(userId);
           
-          // Format the confirmation message with the user's timezone using our new utility
-          const userTimeString = formatUTCDate(
-            finalDueDate,
-            userTimezone,
-            'MMMM d, yyyy h:mm a'
-          );
+          // Format the confirmation message with the user's timezone using our date-calculator module
+          const userTimeString = formatDateForDisplay(finalDueDate, userTimezone);
           
           return {
             success: true,

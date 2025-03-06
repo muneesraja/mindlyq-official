@@ -15,6 +15,8 @@ const agentManager = new AgentManager();
 
 export async function POST(req: Request) {
   try {
+    console.log("Webhook API called");
+    
     // Parse the incoming form data from Twilio
     const formData = await req.formData();
     
@@ -32,8 +34,9 @@ export async function POST(req: Request) {
     });
 
     if (!message || !userId) {
+      console.error("Invalid request: Missing message or userId");
       return new Response(
-        "<?xml version='1.0' encoding='UTF-8'?><Response><Message>Invalid request</Message></Response>",
+        "<?xml version='1.0' encoding='UTF-8'?><Response><Message>Invalid request: Missing message or user ID</Message></Response>",
         {
           status: 400,
           headers: {
@@ -45,10 +48,64 @@ export async function POST(req: Request) {
 
     // Process the message using our agent manager
     console.log(`Processing message from ${userId}: "${message}"`);
-    const result = await agentManager.processMessage(message, userId);
+    let result;
+    try {
+      result = await agentManager.processMessage(message, userId);
+      console.log("Agent manager result:", JSON.stringify(result, null, 2));
+    } catch (processError) {
+      console.error("Error processing message with agent manager:", processError);
+      return new Response(
+        "<?xml version='1.0' encoding='UTF-8'?><Response><Message>Error processing your request. Please try again.</Message></Response>",
+        {
+          status: 500,
+          headers: {
+            "Content-Type": "application/xml",
+          },
+        }
+      );
+    }
 
     // Ensure we have a non-empty response message
-    const responseMessage = result.message || "I'm here to help with your reminders. What would you like me to do?";
+    let responseMessage = result?.message || "I'm here to help with your reminders. What would you like me to do?";
+    
+    // Check if we have formatted output from the ReminderListingAgent
+    if (result?.formattedOutput) {
+      console.log("Using formatted output from ReminderListingAgent");
+      
+      // Construct a nicely formatted message using the structured output
+      const formattedOutput = result.formattedOutput;
+      
+      // Build the formatted message
+      let formattedMessage = '';
+      
+      // Add header
+      formattedMessage += `${formattedOutput.header}\n\n`;
+      
+      // Add reminders
+      formattedMessage += formattedOutput.reminders.join('\n');
+      
+      // Add pagination info
+      formattedMessage += `\n\n${formattedOutput.pagination}`;
+      
+      // Add pagination instructions if present in the original message
+      if (responseMessage.includes("Say 'show next page'")) {
+        formattedMessage += "\n\nSay 'show next page' or 'next' to see more reminders.";
+      }
+      
+      // Add tips
+      formattedMessage += "\n\nTips:";
+      formattedOutput.tips.forEach(tip => {
+        formattedMessage += `\n• ${tip}`;
+      });
+      
+      // Use the formatted message
+      responseMessage = formattedMessage;
+    }
+    
+    // Add query context info if available
+    if (result?.queryContext && process.env.DEBUG_MODE === 'true') {
+      console.log("Query context:", JSON.stringify(result.queryContext, null, 2));
+    }
 
     console.log("Sending response:", responseMessage);
 
@@ -106,16 +163,22 @@ export async function POST(req: Request) {
           }
         }
       }
-
-      // We don't need to fetch message status anymore since we're handling
-      // multiple messages and have already logged the SIDs
     } catch (sendError) {
       console.error("Error sending WhatsApp message:", sendError);
+      return new Response(
+        "<?xml version='1.0' encoding='UTF-8'?><Response><Message>Error sending response message. Please try again.</Message></Response>",
+        {
+          status: 500,
+          headers: {
+            "Content-Type": "application/xml",
+          },
+        }
+      );
     }
 
-    // Return a success response to Twilio
+    // Return a proper TwiML response to Twilio
     return new Response(
-      `<?xml version='1.0' encoding='UTF-8'?><Response></Response>`,
+      `<?xml version='1.0' encoding='UTF-8'?><Response><Message>Message received and processed successfully.</Message></Response>`,
       {
         headers: {
           "Content-Type": "application/xml",
@@ -123,11 +186,11 @@ export async function POST(req: Request) {
       }
     );
   } catch (error) {
-    console.error("Error in webhook:", error);
+    console.error("Unhandled error in webhook:", error);
     
-    // Return a TwiML response even in case of error
+    // Return a detailed TwiML response for error tracking
     return new Response(
-      "<?xml version='1.0' encoding='UTF-8'?><Response><Message>Sorry, something went wrong. Please try again.</Message></Response>",
+      `<?xml version='1.0' encoding='UTF-8'?><Response><Message>Sorry, an unexpected error occurred. Our team has been notified.</Message></Response>`,
       {
         status: 500,
         headers: {

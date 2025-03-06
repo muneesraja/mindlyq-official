@@ -167,7 +167,7 @@ function utcToZonedTime(date: Date, timeZone: string): Date {
     partValues[part.type] = part.value;
   }
   
-  // Create a new date in the target timezone
+  // Get the date components
   const year = parseInt(partValues.year);
   const month = parseInt(partValues.month) - 1; // Month is 0-indexed in Date
   const day = parseInt(partValues.day);
@@ -175,10 +175,9 @@ function utcToZonedTime(date: Date, timeZone: string): Date {
   const minute = parseInt(partValues.minute);
   const second = parseInt(partValues.second);
   
-  // Create a date object with local components
-  const localDate = new Date(year, month, day, hour, minute, second);
-  
-  return localDate;
+  // The key fix: Use Date.UTC to create a date that won't have timezone offset applied again
+  // This ensures we're creating a date object that represents the correct local time
+  return new Date(Date.UTC(year, month, day, hour, minute, second));
 }
 
 /**

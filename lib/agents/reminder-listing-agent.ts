@@ -3,6 +3,18 @@ import { prisma } from "../db";
 import { formatDateForHumans, formatRecurrenceForHumans } from "../ai-date-parser";
 import { getUserTimezone } from "../utils/date-converter";
 import { fromUTC, formatUTCDate } from "../utils/date-converter";
+import { getConversationState, updateConversationState, clearConversationState } from "../conversation-state";
+import { ReminderQueryOptions } from "../utils/reminder-query-builder";
+import { AIPrismaQuery, createSecurePrismaQueryBuilder, logPrismaQueryAttempt } from "../utils/ai-prisma-query-builder";
+
+// Define pagination state interface
+interface PaginationState {
+  page: number;
+  totalPages: number;
+  totalReminders: number;
+  lastQuery: string;
+  prismaQuery?: AIPrismaQuery;
+}
 
 /**
  * Agent responsible for listing reminders
@@ -18,103 +30,190 @@ export class ReminderListingAgent implements Agent {
     // Get the user's timezone preference
     const userTimezone = await getUserTimezone(userId);
     try {
-      // Determine filter type from message
-      let filter = "active"; // Default to active reminders
+      console.log("Processing reminder listing request:", message);
       
-      if (message.toLowerCase().includes("all")) {
-        filter = "all";
-      } else if (message.toLowerCase().includes("pending")) {
-        filter = "pending";
+      // Get conversation state to check for pagination
+      const conversationState = await getConversationState(userId);
+      let paginationState: PaginationState | null = null;
+      
+      // Check if there's stored pagination state
+      if (conversationState?.partialData && 
+          typeof conversationState.partialData === 'object' && 
+          'paginationState' in conversationState.partialData) {
+        paginationState = conversationState.partialData.paginationState as PaginationState;
       }
       
-      // Extract any search terms
-      const searchTerms = this.extractSearchTerms(message);
+      // Determine if this is a pagination request with improved detection
+      const isPaginationRequest = message.toLowerCase().match(/next(\s+page)?|more|show\s+more|continue|following|see\s+more|page\s+\d+|next\s+\d+/i) !== null;
       
-      // Get reminders based on filter
-      let reminders;
+      let prismaQuery: AIPrismaQuery;
+      let page = 0;
       
-      if (filter === "all") {
-        reminders = await prisma.reminder.findMany({
-          where: {
-            user_id: userId,
-            ...(searchTerms ? { title: { contains: searchTerms, mode: 'insensitive' } } : {})
-          },
-          orderBy: {
-            due_date: 'asc'
+      // Handle pagination request
+      if (isPaginationRequest && paginationState) {
+        console.log("Handling pagination request");
+        // Continue with the same query from previous request
+        if (paginationState.prismaQuery) {
+          prismaQuery = paginationState.prismaQuery;
+          page = paginationState.page + 1;
+          
+          // Don't exceed total pages
+          if (page >= paginationState.totalPages) {
+            page = paginationState.totalPages - 1;
           }
-        });
-      } else if (filter === "active") {
-        console.log("Listing active reminders for user:", userId);
-        
-        // Get current date in UTC
-        const nowUTC = new Date();
-        
-        // Convert to user's timezone for proper comparison
-        const userTimezoneNow = fromUTC(nowUTC, userTimezone);
-        console.log("Current time in user timezone:", userTimezoneNow.toISOString());
-        
-        // Fetch all active reminders regardless of due date
-        const allReminders = await prisma.reminder.findMany({
-          where: {
-            user_id: userId,
-            status: "active", // Only get active reminders
-            ...(searchTerms ? { title: { contains: searchTerms, mode: 'insensitive' } } : {})
-          },
-          orderBy: {
-            due_date: 'asc'
-          }
-        });
-        
-        console.log(`Found ${allReminders.length} active reminders in database`);
-        
-        // Include all active reminders - don't filter by date
-        // This ensures future reminders are shown
-        reminders = allReminders;
-        
-        // Log details of each reminder for debugging
-        allReminders.forEach((reminder, index) => {
-          const reminderDate = new Date(reminder.due_date);
-          const reminderLocalDate = fromUTC(reminderDate, userTimezone);
-          console.log(`Reminder ${index + 1}: "${reminder.title}" - Due: ${reminderLocalDate.toISOString()} - Status: ${reminder.status} - Recurrence: ${reminder.recurrence_type || 'none'}`);
-        });
-      } else if (filter === "pending") {
-        reminders = await prisma.reminder.findMany({
-          where: {
-            user_id: userId,
-            status: "pending",
-            ...(searchTerms ? { title: { contains: searchTerms, mode: 'insensitive' } } : {})
-          },
-          orderBy: {
-            due_date: 'asc'
-          }
-        });
+          
+          // Update skip for pagination
+          const pageSize = prismaQuery.take || 10;
+          prismaQuery.skip = page * pageSize;
+        } else {
+          // Fall back to generating a new query if prismaQuery not available
+          console.log("No previous query found, generating new query");
+          const queryBuilder = createSecurePrismaQueryBuilder(userId);
+          prismaQuery = await queryBuilder.buildPrismaQuery(message);
+          page = 0;
+        }
       } else {
-        // Search by term
-        reminders = await prisma.reminder.findMany({
-          where: {
-            user_id: userId,
-            title: { contains: filter, mode: 'insensitive' }
-          },
-          orderBy: {
-            due_date: 'asc'
-          }
-        });
+        console.log("Generating new Prisma query from user message");
+        // Create a secure query builder for this user
+        const queryBuilder = createSecurePrismaQueryBuilder(userId);
+        
+        // Generate Prisma query from the user's message
+        prismaQuery = await queryBuilder.buildPrismaQuery(message);
+        page = 0;
+        
+        // Log the generated query for debugging
+        console.log("Generated Prisma query:", JSON.stringify(prismaQuery, null, 2));
       }
       
-      // Format reminders for display
-      if (reminders.length === 0) {
+      // Log the query attempt for security auditing
+      logPrismaQueryAttempt(userId, prismaQuery, true);
+      
+      // Handle count query type
+      if (prismaQuery.queryType === 'count') {
+        const count = await prisma.reminder.count({
+          where: prismaQuery.where
+        });
+        
         return {
           success: true,
-          message: "You don't have any reminders at the moment."
+          message: `You have ${count} reminder(s) matching your criteria.`,
+          data: { count }
         };
       }
       
-      // Limit to 10 reminders to avoid message length limits
-      const maxReminders = 10;
-      const totalReminders = reminders.length;
-      const displayReminders = reminders.slice(0, maxReminders);
+      // Execute the query to get reminders
+      console.log("Executing Prisma query:", JSON.stringify({
+        where: prismaQuery.where,
+        orderBy: prismaQuery.orderBy,
+        take: prismaQuery.take,
+        skip: prismaQuery.skip
+      }, null, 2));
       
-      let responseMessage = `Here are your reminders (${displayReminders.length}${totalReminders > maxReminders ? " of " + totalReminders : ""}):\n`;
+      const reminders = await prisma.reminder.findMany({
+        where: prismaQuery.where,
+        orderBy: prismaQuery.orderBy,
+        take: prismaQuery.take || 10,
+        skip: prismaQuery.skip || 0
+      });
+      
+      // Format reminders for display
+      if (reminders.length === 0) {
+        // Provide context-aware empty results message
+        if (prismaQuery.queryType === 'next') {
+          return {
+            success: true,
+            message: "You don't have any upcoming reminders."
+          };
+        } else if (prismaQuery.queryContext?.timeDescription?.includes('tomorrow')) {
+          return {
+            success: true,
+            message: "You don't have any reminders scheduled for tomorrow."
+          };
+        } else if (prismaQuery.queryContext?.searchTerms) {
+          return {
+            success: true,
+            message: `You don't have any reminders matching "${prismaQuery.queryContext.searchTerms}".`
+          };
+        } else {
+          return {
+            success: true,
+            message: "You don't have any reminders matching your criteria."
+          };
+        }
+      }
+      
+      // Calculate pagination details - enforce maximum of 10 reminders per page
+      const pageSize = Math.min(prismaQuery.take || 10, 10); // Ensure maximum of 10 reminders per page
+      
+      // Get total count for accurate pagination
+      const totalReminders = await prisma.reminder.count({
+        where: prismaQuery.where
+      });
+      
+      const totalPages = Math.ceil(totalReminders / pageSize);
+      
+      // Ensure page is within bounds
+      if (page >= totalPages) {
+        page = Math.max(0, totalPages - 1);
+      }
+      
+      // Store pagination state for future requests
+      const newPaginationState: PaginationState = {
+        page,
+        totalPages,
+        totalReminders,
+        lastQuery: message,
+        prismaQuery // Store the full Prisma query for future pagination
+      };
+      
+      // Update conversation state with pagination info
+      await updateConversationState(userId, {
+        role: 'assistant',
+        content: 'Updated pagination state'
+      }, {
+        paginationState: newPaginationState
+      });
+      
+      // We don't need to slice reminders since we're already limiting in the query
+      const displayReminders = reminders;
+      
+      // Calculate current page and total displayed
+      const currentPage = page + 1;
+      const startIndex = page * pageSize;
+      const endIndex = startIndex + displayReminders.length;
+      const totalDisplayed = Math.min(endIndex, totalReminders);
+      
+      // Determine if there are more pages
+      const hasMorePages = totalReminders > endIndex;
+      
+      // Get filter and sorting descriptions from query context
+      let filterType = prismaQuery.queryContext?.filter || 'active reminders';
+      let sortingInfo = prismaQuery.queryContext?.sorting || 'by due date';
+      let timeDescription = prismaQuery.queryContext?.timeDescription || '';
+      
+      // Create header with more conversational formatting
+      let headerText = `Here are your ${filterType}`;
+      if (timeDescription) {
+        headerText += ` ${timeDescription}`;
+      }
+      
+      // Only add sorting info if it's meaningful
+      if (sortingInfo && !sortingInfo.includes('none') && !sortingInfo.includes('default')) {
+        headerText += `, ${sortingInfo}`;
+      }
+      
+      // Add pagination guidance if there are more pages in a more conversational way
+      let paginationGuidance = '';
+      if (hasMorePages) {
+        if (totalReminders - endIndex === 1) {
+          paginationGuidance = '\n\nThere\'s 1 more reminder. Just say "show more" to see it.';  
+        } else {
+          paginationGuidance = `\n\nI found ${totalReminders} reminders in total. Say "show more" to see the next set.`;  
+        }
+      }
+      
+      // Create header with enhanced formatting
+      let responseMessage = `${headerText}:\n`;
       
       const formattedReminders = displayReminders.map((reminder, index) => {
         const date = new Date(reminder.due_date);
@@ -185,21 +284,121 @@ export class ReminderListingAgent implements Agent {
 
       responseMessage += formattedReminders.join("\n");
       
-      if (totalReminders > maxReminders) {
-        responseMessage += `\n\n...and ${totalReminders - maxReminders} more reminder(s).`;
+      // Add pagination info with better formatting
+      responseMessage += `\n\nShowing ${startIndex + 1}-${totalDisplayed} of ${totalReminders} reminder(s)`;
+      
+      // Add pagination instructions if there are more pages
+      if (currentPage < totalPages) {
+        responseMessage += "\n\nSay 'show next page' or 'next' to see more reminders.";
       }
       
+      // Add tips section with better formatting
       responseMessage += "\n\nTips:\n" +
+        "• Sort options: 'Show my reminders newest first' or 'Show oldest reminders first'\n" +
         "• Modify time: 'Change my meeting reminder to 5 PM'\n" +
         "• Modify title: 'Update the title of my 3 PM reminder to team meeting'\n" +
         "• Modify description: 'Change the description of my meeting reminder to prepare agenda first'";
       
 
-      return {
-        success: true,
-        message: responseMessage,
-        data: reminders
-      };
+      // Determine whether to include tips based on format options
+      const includeTips = prismaQuery.formatOptions?.includeTips !== false;
+      
+      // Remove tips as requested
+      const tips = [];
+      
+      // Format output based on requested format
+      if (prismaQuery.formatOptions?.outputFormat === 'json') {
+        // For JSON output, return a structured response
+        const jsonOutput = {
+          reminders: displayReminders.map(r => ({
+            id: r.id,
+            title: r.title,
+            description: prismaQuery.formatOptions?.includeDescription ? r.description : undefined,
+            due_date: r.due_date,
+            status: r.status,
+            recurrence_type: r.recurrence_type
+          })),
+          pagination: {
+            current_page: currentPage,
+            total_pages: totalPages,
+            total_reminders: totalReminders,
+            showing_start: startIndex + 1,
+            showing_end: totalDisplayed
+          },
+          query_context: {
+            filter: filterType,
+            sorting: sortingInfo,
+            time_description: timeDescription,
+            search_terms: prismaQuery.queryContext?.searchTerms
+          }
+        };
+        
+        // Return JSON formatted response
+        return {
+          success: true,
+          message: `JSON output of your ${filterType} reminders:\n${JSON.stringify(jsonOutput, null, 2)}${hasMorePages ? paginationGuidance : ''}`,
+          data: reminders,
+          queryContext: {
+            filter: filterType,
+            sorting: sortingInfo,
+            timeDescription,
+            searchTerms: prismaQuery.queryContext?.searchTerms,
+            hasMorePages,
+            currentPage,
+            totalPages
+          },
+          formattedOutput: {
+            header: headerText,
+            reminders: formattedReminders,
+            pagination: hasMorePages ? `I've shown ${displayReminders.length} out of ${totalReminders} reminders` : `These are all ${totalReminders} reminders`,
+            tips: []
+          }
+        };
+      } else if (prismaQuery.formatOptions?.outputFormat === 'minimal') {
+        // For minimal output, return a simplified response without tips
+        return {
+          success: true,
+          message: responseMessage + (hasMorePages ? paginationGuidance : ''),
+          data: reminders,
+          queryContext: {
+            filter: filterType,
+            sorting: sortingInfo,
+            timeDescription,
+            searchTerms: prismaQuery.queryContext?.searchTerms,
+            hasMorePages,
+            currentPage,
+            totalPages
+          },
+          formattedOutput: {
+            header: headerText,
+            reminders: formattedReminders,
+            pagination: hasMorePages ? `I've shown ${displayReminders.length} out of ${totalReminders} reminders` : `These are all ${totalReminders} reminders`,
+            tips: []
+          }
+        };
+      } else {
+        // For standard text output
+        return {
+          success: true,
+          message: responseMessage + (hasMorePages ? paginationGuidance : ''),
+          data: reminders,
+          queryContext: {
+            filter: filterType,
+            sorting: sortingInfo,
+            timeDescription,
+            searchTerms: prismaQuery.queryContext?.searchTerms,
+            hasMorePages,
+            currentPage,
+            totalPages
+          },
+          formattedOutput: {
+            header: headerText,
+            reminders: formattedReminders,
+            pagination: hasMorePages ? `I've shown ${displayReminders.length} out of ${totalReminders} reminders` : `These are all ${totalReminders} reminders`,
+            tips: []
+          }
+        };
+      }
     } catch (error) {
       console.error("Error in reminder listing:", error);
       
@@ -210,28 +409,5 @@ export class ReminderListingAgent implements Agent {
     }
   }
   
-  /**
-   * Extract search terms from a message
-   * @param message The user message
-   * @returns The extracted search term or null
-   */
-  private extractSearchTerms(message: string): string | null {
-    // Common patterns for search terms
-    const patterns = [
-      /show me my (.+?) reminders/i,
-      /list my (.+?) reminders/i,
-      /reminders about (.+)/i,
-      /reminders for (.+)/i,
-      /reminders related to (.+)/i
-    ];
-    
-    for (const pattern of patterns) {
-      const match = message.match(pattern);
-      if (match && match[1]) {
-        return match[1].trim();
-      }
-    }
-    
-    return null;
-  }
+  // The extractSearchTerms method has been removed as it's now handled by the reminder-query-builder
 }

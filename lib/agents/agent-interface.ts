@@ -12,12 +12,38 @@ export interface Agent {
 }
 
 /**
+ * Formatted output structure for reminder listings
+ */
+export interface FormattedReminderOutput {
+  header: string;
+  reminders: string[];
+  pagination: string;
+  tips: string[];
+}
+
+/**
+ * Query context information
+ */
+export interface QueryContext {
+  filter: string;
+  sorting: string;
+  pagination: string;
+  search: string | null;
+  timeRange: {
+    before: string | null;
+    after: string | null;
+  } | null;
+}
+
+/**
  * Standard response format for all agents
  */
 export interface AgentResponse {
   success: boolean;
   message: string;
   data?: any;
+  formattedOutput?: FormattedReminderOutput;
+  queryContext?: QueryContext;
 }
 
 /**
