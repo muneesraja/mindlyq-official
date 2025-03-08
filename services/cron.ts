@@ -47,7 +47,6 @@ async function isReminderDue(reminder: Reminder, currentUTCTime: Date): Promise<
         
         // For time-specific reminders, we check that it's both today AND the time matches
         if (isToday && timeMatches) {
-          console.log(`Time-specific reminder detected: ${reminder.id} with time ${reminder.recurrence_time}`);
           return true;
         }
         
@@ -126,9 +125,28 @@ export async function processDueReminders(): Promise<{ success: boolean; process
   try {
     // Get current time in UTC
     const now = new Date();
-    
+    const lastThreeMinutes = new Date(now.getTime() - 3 * 60 * 1000);
     console.log(`\n=== Starting reminder check at: ${formatDateForDisplay(now, 'Asia/Kolkata')} ===`);
     console.log(`Current time (UTC): ${formatDateForDisplay(now, 'UTC')}\n`);
+    
+    // Time window for recurring reminders (in minutes)
+    const timeWindow = 5;
+    
+    // Format the current time as HH:MM for comparison
+    const currentHour = now.getUTCHours();
+    const currentMinute = now.getUTCMinutes();
+    
+    // Calculate the time window boundaries
+    const lowerMinute = (currentMinute - timeWindow + 60) % 60;
+    const lowerHour = lowerMinute > currentMinute ? (currentHour - 1 + 24) % 24 : currentHour;
+    const upperMinute = (currentMinute + timeWindow) % 60;
+    const upperHour = upperMinute < currentMinute ? (currentHour + 1) % 24 : currentHour;
+    
+    // Create time strings for comparison
+    const lowerTime = `${lowerHour.toString().padStart(2, '0')}:${lowerMinute.toString().padStart(2, '0')}`;
+    const upperTime = `${upperHour.toString().padStart(2, '0')}:${upperMinute.toString().padStart(2, '0')}`;
+    
+    console.log(`Time window for recurring reminders: ${lowerTime} to ${upperTime}`);
 
     // Get potentially due reminders using database filtering
     // For one-time reminders: Get those where due_date <= now
@@ -140,7 +158,7 @@ export async function processDueReminders(): Promise<{ success: boolean; process
           {
             AND: [
               { recurrence_type: null },
-              { due_date: { lte: now } },
+              { due_date: { lte: now, gte: lastThreeMinutes } },
               { status: { in: ['active', 'pending'] } }
             ]
           },
@@ -148,31 +166,54 @@ export async function processDueReminders(): Promise<{ success: boolean; process
           {
             AND: [
               { recurrence_type: 'none' },
-              { due_date: { lte: now } },
+              { due_date: { lte: now, gte: lastThreeMinutes } },
               { status: { in: ['active', 'pending'] } }
             ]
           },
-          // All active recurring reminders
+          // Recurring reminders with time in the current window
           {
             AND: [
               { recurrence_type: { in: ['daily', 'weekly', 'monthly', 'yearly'] } },
-              { status: 'active' }
+              { status: 'active' },
+              {
+                OR: [
+                  // If lower time < upper time (normal case)
+                  lowerTime <= upperTime
+                    ? {
+                        AND: [
+                          { recurrence_time: { gte: lowerTime } },
+                          { recurrence_time: { lte: upperTime } }
+                        ]
+                      }
+                    // If lower time > upper time (crossing midnight)
+                    : {
+                        OR: [
+                          { recurrence_time: { gte: lowerTime } },
+                          { recurrence_time: { lte: upperTime } }
+                        ]
+                      }
+                ]
+              },
+              // For weekly reminders, also check the day of week
+              {
+                OR: [
+                  { recurrence_type: { not: 'weekly' } },
+                  { recurrence_days: { has: now.getUTCDay() } }
+                ]
+              }
             ]
           }
         ]
       }
     });
     
-    // Log the query for debugging
-    console.log(`Database query executed at: ${now.toISOString()}`);
-    console.log(`Looking for reminders with due_date <= ${now.toISOString()}`);
-    console.log(`Or recurring reminders with status 'active'`);
-    
-    // Process reminders directly in UTC
-    const dueReminders: Reminder[] = [];
-    
+    // Log the number of potentially due reminders found by the database query
     console.log(`Found ${potentiallyDueReminders.length} potentially due reminders to check`);
     
+    // Track how many reminders are actually due
+    let dueReminderCount = 0;
+    
+    // Process reminders directly
     for (const reminder of potentiallyDueReminders) {
       // Get user's timezone preference (only for display purposes)
       const userTimezone = await getUserTimezone(reminder.user_id);
@@ -185,77 +226,72 @@ export async function processDueReminders(): Promise<{ success: boolean; process
       console.log(`- Recurrence time (UTC): ${reminder.recurrence_time || 'N/A'}`);
       console.log(`- Recurrence days: ${reminder.recurrence_days ? JSON.stringify(reminder.recurrence_days) : 'N/A'}`);
       console.log(`- User timezone: ${userTimezone}`);
-      console.log(`- Current time (UTC): ${now.toISOString()}`);
       
       // Check if the reminder is due based on UTC time
       const isDue = await isReminderDue(reminder, now);
       
       console.log(`- Is due: ${isDue}`);
       
+      // Only process reminders that are actually due
       if (isDue) {
-        dueReminders.push(reminder);
-      }
-    }
-    
-    console.log(`Found ${dueReminders.length} due reminders`);
-    
-    // Process the due reminders that we've identified
-    for (const reminder of dueReminders) {
-      try {
-        // Get user's timezone for formatting messages
-        const userTimezone = await getUserTimezone(reminder.user_id);
+        dueReminderCount++;
         
-        // Get user's phone number from user table
-        // We're just validating that the user exists in our system
-        const user = await prisma.userPreference.findUnique({
-          where: { userId: reminder.user_id }
-        });
-        
-        if (!user) {
-          console.log(`Skipping reminder ${reminder.id} - user not found`);
-          continue;
-        }
-        
-        // In a real implementation, you would get the phone number from the user
-        // For now, we'll use the user_id as a placeholder
-        const phone = reminder.user_id;
-        
-        // Format the reminder date in user's timezone using our date converter utility
-        const reminderDate = new Date(reminder.due_date);
-        const formattedDate = formatUTCDate(reminderDate, userTimezone, 'MMMM d, yyyy h:mm a');
-        
-        // Create a structured reminder message with bell emoji using the format from the database
-        const message = `🔔 Reminder: ${reminder.title}\n\n${reminder.description || 'No description provided'}`;
-        
-        console.log(`Sending reminder to ${phone}: ${message}`);
-        
-        // Only send if TWILIO_PHONE_NUMBER is configured
-        if (process.env.TWILIO_PHONE_NUMBER) {
-          await twilioClient.messages.create({
-            body: message,
-            from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
-            to: `whatsapp:${phone}`
+        try {
+          // We already have the user's timezone from above, but we'll keep the code structure
+          // for consistency and in case we need to refresh it
+          
+          // Get user's phone number from user table
+          // We're just validating that the user exists in our system
+          const user = await prisma.userPreference.findUnique({
+            where: { userId: reminder.user_id }
           });
-        } else {
-          console.log('Skipping SMS send - TWILIO_PHONE_NUMBER not configured');
+          
+          if (!user) {
+            console.log(`Skipping reminder ${reminder.id} - user not found`);
+            continue;
+          }
+          
+          // In a real implementation, you would get the phone number from the user
+          // For now, we'll use the user_id as a placeholder
+          const phone = reminder.user_id;
+          
+          // Format the reminder date in user's timezone using our date converter utility
+          const reminderDate = new Date(reminder.due_date);
+          const formattedDate = formatUTCDate(reminderDate, userTimezone, 'MMMM d, yyyy h:mm a');
+          
+          // Create a structured reminder message with bell emoji using the format from the database
+          const message = `🔔 Reminder: ${reminder.title}\n\n${reminder.description || 'No description provided'}`;
+          
+          console.log(`Sending reminder to ${phone}: ${message}`);
+          
+          // Only send if TWILIO_PHONE_NUMBER is configured
+          if (process.env.TWILIO_PHONE_NUMBER) {
+            await twilioClient.messages.create({
+              body: message,
+              from: `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`,
+              to: `whatsapp:${phone}`
+            });
+          } else {
+            console.log('Skipping SMS send - TWILIO_PHONE_NUMBER not configured');
+          }
+          
+          // Update one-time reminder status to 'sent'
+          if (reminder.recurrence_type === 'none' || !reminder.recurrence_type) {
+            await prisma.reminder.update({
+              where: { id: reminder.id },
+              data: { status: 'sent' }
+            });
+          }
+          
+          console.log(`Successfully processed reminder ${reminder.id}`);
+        } catch (error) {
+          console.error(`Error processing reminder ${reminder.id}:`, error);
         }
-        
-        // Update one-time reminder status to 'sent'
-        if (reminder.recurrence_type === 'none' || !reminder.recurrence_type) {
-          await prisma.reminder.update({
-            where: { id: reminder.id },
-            data: { status: 'sent' }
-          });
-        }
-        
-        console.log(`Successfully processed reminder ${reminder.id}`);
-      } catch (error) {
-        console.error(`Error processing reminder ${reminder.id}:`, error);
       }
     }
 
-    console.log(`Processed ${dueReminders.length} reminders`);
-    return { success: true, processed: dueReminders.length };
+    console.log(`Processed ${dueReminderCount} reminders`);
+    return { success: true, processed: dueReminderCount };
   } catch (error) {
     console.error("Error in processDueReminders:", error);
     throw error;

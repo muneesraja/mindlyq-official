@@ -1,4 +1,5 @@
-import { parseISO, format, isValid, parse } from 'date-fns';
+import { parseISO, format, isValid, parse, getYear, getMonth, getDate, getHours, getMinutes, getSeconds } from 'date-fns';
+import { toZonedTime, fromZonedTime, formatInTimeZone } from 'date-fns-tz';
 import { prisma } from '../db';
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 
@@ -88,104 +89,65 @@ const COMMON_TIMEZONE_MAPPINGS: Record<string, string> = {
   "canada": "America/Toronto",
 };
 
-// Define custom timezone conversion functions since date-fns-tz ESM exports are not working with bun
-
 /**
  * Convert a date from a specific timezone to UTC
+ * @param date Date in the source timezone
+ * @param timeZone Source timezone identifier
+ * @returns Date in UTC
  */
 function zonedTimeToUtc(date: Date, timeZone: string): Date {
-  // Get the date components in the source timezone
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: 'numeric',
-    second: 'numeric',
-    hour12: false
-  });
-  
-  // Format the date to get parts in the source timezone
-  const parts = formatter.formatToParts(date);
-  
-  // Extract the parts
-  const partValues: Record<string, string> = {};
-  for (const part of parts) {
-    partValues[part.type] = part.value;
+  try {
+    // Use date-fns-tz to convert from zoned time to UTC
+    return fromZonedTime(date, timeZone);
+  } catch (error) {
+    console.error(`Error in zonedTimeToUtc: ${error}`);
+    // Fallback implementation if date-fns-tz fails
+    const offset = new Date().getTimezoneOffset() * 60000;
+    return new Date(date.getTime() - offset);
   }
-  
-  // Get the date components
-  const year = parseInt(partValues.year);
-  const month = parseInt(partValues.month) - 1; // Month is 0-indexed in Date
-  const day = parseInt(partValues.day);
-  const hour = parseInt(partValues.hour);
-  const minute = parseInt(partValues.minute);
-  const second = parseInt(partValues.second);
-  
-  // Create a UTC date with these components
-  return new Date(Date.UTC(year, month, day, hour, minute, second));
 }
 
 /**
  * Format a date in a specific timezone
+ * @param date Date to format
+ * @param timeZone Target timezone
+ * @param formatStr Format string for date-fns
+ * @returns Formatted date string
  */
-function formatInTimeZone(date: Date, timeZone: string, formatStr: string): string {
-  // Convert to the target timezone first
-  const zonedDate = utcToZonedTime(date, timeZone);
-  
-  // Use date-fns format with the zoned date
-  return format(zonedDate, formatStr);
+function formatTz(date: Date, timeZone: string, formatStr: string): string {
+  try {
+    // Use date-fns-tz to format in the target timezone
+    return formatInTimeZone(date, timeZone, formatStr);
+  } catch (error) {
+    console.error(`Error in formatTz: ${error}`);
+    // Fallback to basic formatting if date-fns-tz fails
+    return format(date, formatStr);
+  }
 }
 
 /**
  * Convert a UTC date to a specific timezone
- * 
- * This function takes a UTC date and returns a JavaScript Date object
- * that represents the same moment in time, but with the date/time components
- * adjusted to display correctly in the target timezone.
+ * @param date Date in UTC
+ * @param timeZone Target timezone
+ * @returns Date adjusted for display in the target timezone
  */
 function utcToZonedTime(date: Date, timeZone: string): Date {
-  // Create a formatter that will parse this UTC date in the target timezone
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: 'numeric',
-    second: 'numeric',
-    hour12: false
-  });
-  
-  // Format the date to get parts in the target timezone
-  const parts = formatter.formatToParts(date);
-  
-  // Extract the parts
-  const partValues: Record<string, string> = {};
-  for (const part of parts) {
-    partValues[part.type] = part.value;
+  try {
+    // Use date-fns-tz to convert UTC to zoned time
+    return toZonedTime(date, timeZone);
+  } catch (error) {
+    console.error(`Error in utcToZonedTime: ${error}`);
+    // Fallback implementation if date-fns-tz fails
+    const year = getYear(date);
+    const month = getMonth(date);
+    const day = getDate(date);
+    const hour = getHours(date);
+    const minute = getMinutes(date);
+    const second = getSeconds(date);
+    
+    // Create a date in the local timezone with these components
+    return new Date(year, month, day, hour, minute, second);
   }
-  
-  // Get the date components
-  const year = parseInt(partValues.year);
-  const month = parseInt(partValues.month) - 1; // Month is 0-indexed in Date
-  const day = parseInt(partValues.day);
-  const hour = parseInt(partValues.hour);
-  const minute = parseInt(partValues.minute);
-  const second = parseInt(partValues.second);
-  
-  // Create a date in the local timezone with these components
-  // This preserves the display date/time without timezone adjustments
-  const result = new Date(year, month, day, hour, minute, second);
-  
-  console.log(`UTC to Zoned Time conversion:`);
-  console.log(`- Input UTC date: ${date.toISOString()}`);
-  console.log(`- Target timezone: ${timeZone}`);
-  console.log(`- Extracted components: ${year}-${month+1}-${day} ${hour}:${minute}:${second}`);
-  console.log(`- Result: ${result.toISOString()}`);
-  
-  return result;
 }
 
 /**
@@ -229,7 +191,7 @@ export function formatUTCDate(
   if (!isValid(utcDate)) {
     return 'Invalid date';
   }
-  return formatInTimeZone(utcDate, timezone, formatString);
+  return formatTz(utcDate, timezone, formatString);
 }
 
 /**
@@ -406,8 +368,11 @@ export async function setUserTimezone(userId: string, timezone: string): Promise
  * @returns Whether the timezone is valid
  */
 export function isValidTimezone(timezone: string): boolean {
+  if (!timezone) return false;
+  
   try {
-    Intl.DateTimeFormat(undefined, { timeZone: timezone });
+    // Try to format a date with the timezone using date-fns-tz
+    formatInTimeZone(new Date(), timezone, 'yyyy-MM-dd');
     return true;
   } catch (error) {
     return false;
