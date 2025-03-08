@@ -172,7 +172,7 @@ export async function parseDateTime(text: string, userId?: string): Promise<Date
     
     const response = result.response;
     const responseText = response.text();
-    
+    console.log("AI response: ", responseText)
     // Parse the JSON response
     try {
       // Clean up the response text if it contains markdown code blocks

@@ -127,21 +127,53 @@ export async function processDueReminders(): Promise<{ success: boolean; process
     // Get current time in UTC
     const now = new Date();
     
-    console.log("\n=== Starting reminder check at:", now.toISOString(), "===");
+    console.log(`\n=== Starting reminder check at: ${formatDateForDisplay(now, 'Asia/Kolkata')} ===`);
+    console.log(`Current time (UTC): ${formatDateForDisplay(now, 'UTC')}\n`);
 
-    // Get all active reminders
-    const activeReminders = await prisma.reminder.findMany({
+    // Get potentially due reminders using database filtering
+    // For one-time reminders: Get those where due_date <= now
+    // For recurring reminders: Get all active recurring reminders
+    const potentiallyDueReminders = await prisma.reminder.findMany({
       where: {
-        status: { in: ["active", "pending"] }
+        OR: [
+          // One-time reminders that are due (null recurrence_type)
+          {
+            AND: [
+              { recurrence_type: null },
+              { due_date: { lte: now } },
+              { status: { in: ['active', 'pending'] } }
+            ]
+          },
+          // One-time reminders that are due ('none' recurrence_type)
+          {
+            AND: [
+              { recurrence_type: 'none' },
+              { due_date: { lte: now } },
+              { status: { in: ['active', 'pending'] } }
+            ]
+          },
+          // All active recurring reminders
+          {
+            AND: [
+              { recurrence_type: { in: ['daily', 'weekly', 'monthly', 'yearly'] } },
+              { status: 'active' }
+            ]
+          }
+        ]
       }
     });
+    
+    // Log the query for debugging
+    console.log(`Database query executed at: ${now.toISOString()}`);
+    console.log(`Looking for reminders with due_date <= ${now.toISOString()}`);
+    console.log(`Or recurring reminders with status 'active'`);
     
     // Process reminders directly in UTC
     const dueReminders: Reminder[] = [];
     
-    console.log(`Found ${activeReminders.length} active reminders to check`);
+    console.log(`Found ${potentiallyDueReminders.length} potentially due reminders to check`);
     
-    for (const reminder of activeReminders) {
+    for (const reminder of potentiallyDueReminders) {
       // Get user's timezone preference (only for display purposes)
       const userTimezone = await getUserTimezone(reminder.user_id);
       

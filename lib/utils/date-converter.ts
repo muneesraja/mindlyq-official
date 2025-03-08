@@ -175,9 +175,17 @@ function utcToZonedTime(date: Date, timeZone: string): Date {
   const minute = parseInt(partValues.minute);
   const second = parseInt(partValues.second);
   
-  // The key fix: Use Date.UTC to create a date that won't have timezone offset applied again
-  // This ensures we're creating a date object that represents the correct local time
-  return new Date(Date.UTC(year, month, day, hour, minute, second));
+  // Create a date in the local timezone with these components
+  // This preserves the display date/time without timezone adjustments
+  const result = new Date(year, month, day, hour, minute, second);
+  
+  console.log(`UTC to Zoned Time conversion:`);
+  console.log(`- Input UTC date: ${date.toISOString()}`);
+  console.log(`- Target timezone: ${timeZone}`);
+  console.log(`- Extracted components: ${year}-${month+1}-${day} ${hour}:${minute}:${second}`);
+  console.log(`- Result: ${result.toISOString()}`);
+  
+  return result;
 }
 
 /**

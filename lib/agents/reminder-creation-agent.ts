@@ -300,18 +300,17 @@ export class ReminderCreationAgent implements Agent {
           const recurrenceDays = knownInfo.recurrenceDays || [];
           const recurrenceTime = knownInfo.recurrenceTime || time;
           
-          // Check if this is an immediate reminder (like "in 2 minutes")
+          // Handle short-term reminders (like "in 2 minutes")
           const now = new Date();
-          const isImmediate = localDate.getTime() - now.getTime() < 5 * 60 * 1000; // Less than 5 minutes from now
+          const timeUntilReminder = localDate.getTime() - now.getTime();
+          const isShortTerm = timeUntilReminder < 5 * 60 * 1000; // Less than 5 minutes from now
           
-          // For immediate reminders, make sure the due_date is set correctly
+          // Always use the calculated due date, even for short-term reminders
           let finalDueDate = dueDate;
           
-          if (isImmediate) {
-            console.log("Detected immediate reminder, setting due_date to current time");
-            // For immediate reminders, set the due_date to the current time
-            // This ensures it will be picked up by the cron job immediately
-            finalDueDate = new Date();
+          if (isShortTerm) {
+            console.log(`Detected short-term reminder (${Math.round(timeUntilReminder/1000)} seconds from now), preserving exact due_date: ${dueDate.toISOString()}`);
+            // We keep the exact due_date to ensure the reminder is triggered at the right time
           }
           
           const reminder = await prisma.reminder.create({
