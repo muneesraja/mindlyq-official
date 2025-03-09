@@ -20,35 +20,49 @@ const twilioClient = twilio(
 
 /**
  * Check if a reminder's recurrence time matches the current time
- * @param reminderTimeMinutes The reminder's recurrence time in minutes since midnight
- * @param currentTime The current time to check against
+ * @param reminderTimeMinutes The reminder's recurrence time in minutes since midnight (UTC)
+ * @param currentTime The current time to check against (UTC)
  * @returns True if the times match exactly or within the same minute
  */
 function isTimeMatching(reminderTimeMinutes: number, currentTime: Date): boolean {
   try {
-    // Convert current time to minutes since midnight
+    // Convert current time to minutes since midnight (in UTC)
     const currentTimeMinutes = currentTime.getUTCHours() * 60 + currentTime.getUTCMinutes();
     const currentSeconds = currentTime.getUTCSeconds();
     
+    // Log detailed time information for debugging
+    console.log(`[isTimeMatching] Comparing times:`);
+    console.log(`- Reminder time: ${Math.floor(reminderTimeMinutes / 60).toString().padStart(2, '0')}:${(reminderTimeMinutes % 60).toString().padStart(2, '0')} UTC (${reminderTimeMinutes} minutes)`);
+    console.log(`- Current time: ${currentTime.getUTCHours().toString().padStart(2, '0')}:${currentTime.getUTCMinutes().toString().padStart(2, '0')}:${currentTime.getUTCSeconds().toString().padStart(2, '0')} UTC (${currentTimeMinutes} minutes)`);
+    console.log(`- Difference: ${reminderTimeMinutes - currentTimeMinutes} minutes`);
+    
     // For exact matching, we want to trigger the reminder when:
     // 1. The minute exactly matches (no diff in minutes)
-    // 2. OR we're in the last few seconds of the previous minute (to account for cron timing)
     if (reminderTimeMinutes === currentTimeMinutes) {
+      console.log(`[isTimeMatching] ✅ MATCH: Exact minute match`);
       return true;
-    } else if (reminderTimeMinutes === currentTimeMinutes + 1 && currentSeconds >= 55) {
-      // Allow triggering in the last 5 seconds of the previous minute
-      // This helps with cron jobs that might run slightly before the minute changes
+    } 
+    // 2. OR we're in the last few seconds of the previous minute (to account for cron timing)
+    else if (reminderTimeMinutes === currentTimeMinutes + 1 && currentSeconds >= 55) {
+      console.log(`[isTimeMatching] ✅ MATCH: Last 5 seconds before the next minute`);
+      return true;
+    }
+    // 3. OR we're within 2 minutes of the target time (to account for cron job delays)
+    else if (Math.abs(reminderTimeMinutes - currentTimeMinutes) <= 2) {
+      console.log(`[isTimeMatching] ✅ MATCH: Within 2-minute window`);
       return true;
     }
     
     // Handle edge case at midnight (23:59 vs 00:00)
     if (reminderTimeMinutes === 0 && currentTimeMinutes === 1439 && currentSeconds >= 55) {
+      console.log(`[isTimeMatching] ✅ MATCH: Midnight transition case`);
       return true;
     }
     
+    console.log(`[isTimeMatching] ❌ NO MATCH: Times don't match within tolerance`);
     return false;
   } catch (error) {
-    console.error(`Error matching time ${reminderTimeMinutes}:`, error);
+    console.error(`[isTimeMatching] Error matching time ${reminderTimeMinutes}:`, error);
     return false;
   }
 }
@@ -377,9 +391,22 @@ export async function processDueReminders(): Promise<{ success: boolean; process
       console.log(`\nChecking reminder: ${reminder.id}`);
       console.log(`- Title: ${reminder.title}`);
       console.log(`- Due date (UTC): ${reminder.due_date.toISOString()}`);
-      console.log(`- Formatted due date (User TZ): ${formatUTCDate(reminder.due_date, userTimezone)}`);
+      
+      // Use formatDateForDisplay which has enhanced logging for debugging
+      const formattedDueDate = formatDateForDisplay(reminder.due_date, userTimezone);
+      console.log(`- Formatted due date (User TZ): ${formattedDueDate}`);
+      
+      // Also log the formatted date using formatUTCDate for comparison
+      const formattedUTCDate = formatUTCDate(reminder.due_date, userTimezone);
+      console.log(`- Formatted due date (alternative method): ${formattedUTCDate}`);
+      
       console.log(`- Recurrence type: ${reminder.recurrence_type || 'none'}`);
-      console.log(`- Recurrence time (UTC): ${reminder.recurrence_time || 'N/A'}`);
+      
+      // Convert recurrence_time from minutes to HH:MM format for better readability
+      const recurrenceTimeStr = reminder.recurrence_time !== null ? 
+        `${Math.floor(reminder.recurrence_time / 60).toString().padStart(2, '0')}:${(reminder.recurrence_time % 60).toString().padStart(2, '0')}` : 'N/A';
+      console.log(`- Recurrence time (UTC): ${reminder.recurrence_time || 'N/A'} (${recurrenceTimeStr})`);
+      
       console.log(`- Recurrence days: ${reminder.recurrence_days ? JSON.stringify(reminder.recurrence_days) : 'N/A'}`);
       console.log(`- User timezone: ${userTimezone}`);
       
@@ -411,12 +438,16 @@ export async function processDueReminders(): Promise<{ success: boolean; process
           // For now, we'll use the user_id as a placeholder
           const phone = reminder.user_id;
           
-          // Format the reminder date in user's timezone using our date converter utility
+          // Format the reminder date in user's timezone using our enhanced date formatter
           const reminderDate = new Date(reminder.due_date);
-          const formattedDate = formatUTCDate(reminderDate, userTimezone, 'MMMM d, yyyy h:mm a');
+          
+          // Use formatDateForDisplay for consistent date formatting across the application
+          const formattedDate = formatDateForDisplay(reminderDate, userTimezone);
+          console.log(`- Formatted date for message: ${formattedDate}`);
           
           // Create a structured reminder message with bell emoji using the format from the database
-          const message = `🔔 Reminder: ${reminder.title}\n\n${reminder.description || 'No description provided'}`;
+          // Include the formatted date in the message for clarity
+          const message = `🔔 Reminder: ${reminder.title}\n\nDue: ${formattedDate} (${userTimezone})\n\n${reminder.description || 'No description provided'}`;
           
           console.log(`Sending reminder to ${phone}: ${message}`);
           
@@ -472,10 +503,23 @@ export function startCronJobs(): void {
   // Schedule the job to run every minute
   cron.schedule('* * * * *', async () => {
     try {
-      console.log("Running scheduled reminder check...");
-      await processDueReminders();
+      // Get current time in UTC for logging
+      const now = new Date();
+      console.log(`\n[CRON JOB] Running scheduled reminder check at ${now.toISOString()} (UTC)`);
+      
+      // Log the current time in different formats for debugging timezone issues
+      console.log(`[CRON JOB] Current time details:`);
+      console.log(`- UTC ISO: ${now.toISOString()}`);
+      console.log(`- UTC String: ${now.toUTCString()}`);
+      console.log(`- Local String: ${now.toString()}`);
+      console.log(`- UTC Hours: ${now.getUTCHours()}, UTC Minutes: ${now.getUTCMinutes()}`);
+      console.log(`- Local Hours: ${now.getHours()}, Local Minutes: ${now.getMinutes()}`);
+      
+      // Process due reminders
+      const result = await processDueReminders();
+      console.log(`[CRON JOB] Processed ${result.processed} reminders`);
     } catch (error) {
-      console.error("Error in cron job:", error);
+      console.error("[CRON JOB] Error in cron job:", error);
     }
   });
   

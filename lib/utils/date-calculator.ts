@@ -516,10 +516,23 @@ export function formatDateForDisplay(date: Date, timezone: string = 'UTC'): stri
     timezone = 'UTC';
   }
   
-  // Convert to local timezone for display
-  const localDate = fromUTC(date, timezone);
-  // Use the date-fns format function which respects the actual date components
-  return format(localDate, 'EEEE, MMMM d, yyyy h:mm a');
+  console.log(`[formatDateForDisplay] Input date: ${date.toISOString()}, timezone: ${timezone}`);
+  
+  try {
+    // The date is already in UTC from the database, so we need to convert it to the user's timezone
+    const localDate = fromUTC(date, timezone);
+    console.log(`[formatDateForDisplay] Converted to local date: ${localDate.toISOString()}`);
+    
+    // Use the date-fns format function which respects the actual date components
+    const formattedDate = format(localDate, 'EEEE, MMMM d, yyyy h:mm a');
+    console.log(`[formatDateForDisplay] Formatted date: ${formattedDate}`);
+    
+    return formattedDate;
+  } catch (error) {
+    console.error(`[formatDateForDisplay] Error formatting date: ${error}`);
+    // Fallback to a basic format if there's an error
+    return date.toString();
+  }
 }
 
 /**

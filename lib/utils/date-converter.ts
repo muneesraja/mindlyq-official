@@ -201,20 +201,40 @@ function formatTz(date: Date, timeZone: string, formatStr: string): string {
  */
 function utcToZonedTime(date: Date, timeZone: string): Date {
   try {
+    console.log(`[utcToZonedTime] Converting UTC date ${date.toISOString()} to timezone ${timeZone}`);
+    
     // Use date-fns-tz to convert UTC to zoned time
-    return toZonedTime(date, timeZone);
+    const zonedDate = toZonedTime(date, timeZone);
+    console.log(`[utcToZonedTime] Result: ${zonedDate.toISOString()}`);
+    
+    return zonedDate;
   } catch (error) {
     console.error(`Error in utcToZonedTime: ${error}`);
-    // Fallback implementation if date-fns-tz fails
-    const year = getYear(date);
-    const month = getMonth(date);
-    const day = getDate(date);
-    const hour = getHours(date);
-    const minute = getMinutes(date);
-    const second = getSeconds(date);
     
-    // Create a date in the local timezone with these components
-    return new Date(year, month, day, hour, minute, second);
+    // More robust fallback implementation
+    try {
+      // Create a date string in ISO format with the 'Z' indicating UTC
+      const isoString = date.toISOString();
+      
+      // Use formatInTimeZone to get the date/time components in the target timezone
+      const formattedInTargetTz = formatInTimeZone(date, timeZone, 'yyyy-MM-dd HH:mm:ss');
+      console.log(`[utcToZonedTime] Formatted in target timezone: ${formattedInTargetTz}`);
+      
+      // Parse the formatted string back to a Date object
+      const [datePart, timePart] = formattedInTargetTz.split(' ');
+      const [year, month, day] = datePart.split('-').map(Number);
+      const [hour, minute, second] = timePart.split(':').map(Number);
+      
+      // Create a new Date with these components (month is 0-indexed in JavaScript)
+      const result = new Date(year, month - 1, day, hour, minute, second);
+      console.log(`[utcToZonedTime] Fallback result: ${result.toISOString()}`);
+      
+      return result;
+    } catch (fallbackError) {
+      console.error(`Fallback also failed in utcToZonedTime: ${fallbackError}`);
+      // Last resort fallback
+      return date;
+    }
   }
 }
 
