@@ -65,7 +65,7 @@ async function runTests() {
             console.log(`📋 First reminder (if any): ${reminders.length > 0 ? reminders[0].title : 'None'}`);
           }
         } catch (dbError) {
-          console.error('❌ Database query error:', dbError.message);
+          console.error('❌ Database query error:', dbError instanceof Error ? dbError.message : String(dbError));
         }
       }
     } catch (error) {

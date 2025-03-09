@@ -16,22 +16,8 @@ const TEST_QUERIES = [
 ];
 
 async function setupTestData() {
-  // Check if test user exists
-  const existingUser = await prisma.user.findUnique({
-    where: { id: TEST_USER_ID }
-  });
-
-  if (!existingUser) {
-    // Create test user
-    await prisma.user.create({
-      data: {
-        id: TEST_USER_ID,
-        name: "Test User",
-        email: "test@example.com",
-        timezone: "Asia/Kolkata"
-      }
-    });
-  }
+  // Skip user creation since we don't have a User model
+  // Just use the TEST_USER_ID directly
 
   // Clear existing reminders for test user
   await prisma.reminder.deleteMany({
@@ -51,7 +37,7 @@ async function setupTestData() {
       due_date: now,
       status: "active",
       recurrence_type: "none",
-      recurrence_time: "10:00"
+      recurrence_time: 600  // 10:00 in minutes (10 hours * 60 minutes)
     },
     {
       user_id: TEST_USER_ID,
@@ -60,7 +46,7 @@ async function setupTestData() {
       due_date: tomorrow,
       status: "active",
       recurrence_type: "none",
-      recurrence_time: "14:00"
+      recurrence_time: 840  // 14:00 in minutes (14 hours * 60 minutes)
     },
     {
       user_id: TEST_USER_ID,
@@ -69,7 +55,7 @@ async function setupTestData() {
       due_date: new Date(now.getTime() - 24 * 60 * 60 * 1000), // Yesterday
       status: "completed",
       recurrence_type: "none",
-      recurrence_time: "09:00"
+      recurrence_time: 540  // 09:00 in minutes (9 hours * 60 minutes)
     }
   ];
 

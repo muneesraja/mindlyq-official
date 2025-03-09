@@ -48,7 +48,7 @@ async function createTestReminders() {
       due_date: tomorrow,
       status: "active",
       recurrence_type: "weekly",
-      recurrence_time: "10:00"
+      recurrence_time: 600  // 10:00 in minutes (10 hours * 60 minutes)
     },
     {
       user_id: TEST_USER_ID,
@@ -57,7 +57,7 @@ async function createTestReminders() {
       due_date: nextWeek,
       status: "active",
       recurrence_type: "none",
-      recurrence_time: "14:30"
+      recurrence_time: 870  // 14:30 in minutes (14 hours * 60 + 30 minutes)
     },
     {
       user_id: TEST_USER_ID,
@@ -66,7 +66,7 @@ async function createTestReminders() {
       due_date: yesterday,
       status: "completed",
       recurrence_type: "none",
-      recurrence_time: "17:00"
+      recurrence_time: 1020  // 17:00 in minutes (17 hours * 60 minutes)
     },
     {
       user_id: TEST_USER_ID,
@@ -75,7 +75,7 @@ async function createTestReminders() {
       due_date: now,
       status: "active",
       recurrence_type: "none",
-      recurrence_time: "18:00"
+      recurrence_time: 1080  // 18:00 in minutes (18 hours * 60 minutes)
     },
     {
       user_id: TEST_USER_ID,
@@ -84,7 +84,7 @@ async function createTestReminders() {
       due_date: tomorrow,
       status: "pending",
       recurrence_type: "weekly",
-      recurrence_time: "20:00"
+      recurrence_time: 1200  // 20:00 in minutes (20 hours * 60 minutes)
     }
   ];
   
