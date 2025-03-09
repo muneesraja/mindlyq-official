@@ -168,6 +168,24 @@ export async function generatePrismaQueryFromUserMessage(message: string, userId
       
       Current date and time in user's timezone: ${userNow}
       
+      REMINDER DATABASE SCHEMA:
+      \`\`\`
+      model Reminder {
+        id              String    @id @default(cuid())
+        title           String
+        description     String?
+        due_date        DateTime
+        user_id         String
+        status          String    @default("active")
+        recurrence_type String?   // Can be "none", "daily", "weekly", etc.
+        recurrence_days Int[]     @default([])  // For weekly recurring: 0=Sunday, 1=Monday, etc.
+        recurrence_time Int?      // Minutes since midnight in UTC
+        last_sent       DateTime?
+        created_at      DateTime  @default(now())
+        updated_at      DateTime  @updatedAt
+      }
+      \`\`\`
+      
       Return a JSON object with the following Prisma query structure:
       {
         "where": {
@@ -195,37 +213,52 @@ export async function generatePrismaQueryFromUserMessage(message: string, userId
         }
       }
       
-      IMPORTANT:
-      1. For status filtering:
+      IMPORTANT RULES FOR QUERY GENERATION:
+      
+      1. REMINDER STATUS FILTERING:
          - "active" reminders: status: "active"
          - "completed" reminders: status: "sent" (completed reminders have status "sent" in the database)
          - "deleted" reminders: status: "deleted"
          - DEFAULT: When user simply asks to list reminders without specifying status, ONLY show active reminders
       
-      2. For time-based queries:
+      2. RECURRING REMINDERS HANDLING:
+         - For "recurring reminders": use { "where": { "recurrence_type": { "not": "none" } } }
+         - For "non-recurring reminders": use { "where": { "recurrence_type": "none" } }
+         - For "daily reminders": use { "where": { "recurrence_type": "daily" } }
+         - For "weekly reminders": use { "where": { "recurrence_type": "weekly" } }
+         - For specific days (e.g., "Monday reminders"): use { "where": { "recurrence_type": "weekly", "recurrence_days": { "has": 1 } } } (0=Sunday, 1=Monday, etc.)
+         - IMPORTANT: When user doesn't explicitly mention recurring or non-recurring reminders, DO NOT include any recurrence_type filter in the query to ensure both types are included
+      
+      3. TIME-BASED QUERIES:
          - Use the current date/time provided above for relative time references
-         - For "tomorrow", calculate the date and time,  use: { "where": { "status": "active", "due_date": { "eq": "tomorrow" } }, "orderBy": [{ "due_date": "asc" }]}
-         - For "today", calculate the date and time,  use: { "where": { "status": "active", "due_date": { "eq": "today" } }, "orderBy": [{ "due_date": "asc" }]}
-         - For "yesterday", calculate the date and time,  use: { "where": { "status": "active", "due_date": { "eq": "yesterday" } }, "orderBy": [{ "due_date": "asc" }]}
+         - For "tomorrow", use: { "where": { "status": "active", "due_date": { "gte": "TOMORROW_START", "lt": "TOMORROW_END" } } }
+         - For "today", use: { "where": { "status": "active", "due_date": { "gte": "TODAY_START", "lt": "TODAY_END" } } }
+         - For "yesterday", use: { "where": { "status": "active", "due_date": { "gte": "YESTERDAY_START", "lt": "YESTERDAY_END" } } }
          - For "next reminder", use: { "where": { "status": "active", "due_date": { "gte": "CURRENT_DATE" } }, "orderBy": [{ "due_date": "asc" }], "take": 1 }
          - DEFAULT: Only include non-completed reminders unless explicitly asked for completed/old/past reminders
-         
-      3. For pagination:
+      
+      4. PAGINATION:
          - ALWAYS limit results to a maximum of 10 reminders per page
          - If user asks for more than 10 reminders, set take to 10 and indicate in queryContext that pagination is required
          - For requests like "show all my reminders", still limit to 10 and indicate more are available
       
-      3. For specialized queries:
+      5. SPECIALIZED QUERIES:
          - "next reminder": Set queryType to "next" and limit to 1
          - "first/oldest reminder": Set queryType to "first" and sort by creation date
          - "last/newest reminder": Set queryType to "last" and sort by creation date descending
          - "count of reminders": Set queryType to "count"
          - "reminders tomorrow": Set queryType to "specific_date" and filter for tomorrow's date
       
-      4. For output formatting:
+      6. OUTPUT FORMATTING:
          - JSON output: set outputFormat to "json"
          - Minimal output (no tips): set includeTips to false
          - Include/exclude descriptions: set includeDescription accordingly
+      
+      7. ERROR HANDLING:
+         - If you cannot understand the query or it's impossible to create a valid Prisma query, return a basic query that shows active reminders
+         - Always ensure the query will work with the Reminder schema shown above
+         - Never reference fields that don't exist in the schema
+         - For complex filtering that can't be expressed in Prisma, use simpler filters and note the limitation in queryContext
       
       DO NOT include any explanation, just return the JSON object.
     `;

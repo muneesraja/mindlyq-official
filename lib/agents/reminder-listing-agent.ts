@@ -109,6 +109,17 @@ export class ReminderListingAgent implements Agent {
         skip: prismaQuery.skip
       }, null, 2));
       
+      // If the query doesn't explicitly filter for recurring or non-recurring reminders,
+      // make sure we include both types by default
+      if (!prismaQuery.where.recurrence_type && 
+          !prismaQuery.queryContext?.filter?.toLowerCase().includes('recurring')) {
+        console.log("Query doesn't specify recurrence type, ensuring we include both recurring and non-recurring reminders");
+        // Remove any recurrence_type filter if it exists to ensure we get all types
+        if (prismaQuery.where.recurrence_type) {
+          delete prismaQuery.where.recurrence_type;
+        }
+      }
+      
       const reminders = await prisma.reminder.findMany({
         where: prismaQuery.where,
         orderBy: prismaQuery.orderBy,
@@ -358,7 +369,7 @@ export class ReminderListingAgent implements Agent {
           queryContext: {
             filter: filterType,
             sorting: sortingInfo,
-            searchTerms: prismaQuery.queryContext?.searchTerms,
+            searchTerms: prismaQuery.queryContext?.searchTerms ? [prismaQuery.queryContext.searchTerms] : undefined,
             hasMorePages,
             currentPage,
             totalPages
@@ -379,7 +390,7 @@ export class ReminderListingAgent implements Agent {
           queryContext: {
             filter: filterType,
             sorting: sortingInfo,
-            searchTerms: prismaQuery.queryContext?.searchTerms,
+            searchTerms: prismaQuery.queryContext?.searchTerms ? [prismaQuery.queryContext.searchTerms] : undefined,
             hasMorePages,
             currentPage,
             totalPages
@@ -400,7 +411,7 @@ export class ReminderListingAgent implements Agent {
           queryContext: {
             filter: filterType,
             sorting: sortingInfo,
-            searchTerms: prismaQuery.queryContext?.searchTerms,
+            searchTerms: prismaQuery.queryContext?.searchTerms ? [prismaQuery.queryContext.searchTerms] : undefined,
             hasMorePages,
             currentPage,
             totalPages
