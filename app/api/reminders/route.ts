@@ -50,6 +50,17 @@ export async function POST(req: Request) {
       );
     }
 
+    // Ensure recurrence_time is stored as an integer
+    let parsedRecurrenceTime = null;
+    if (recurrence_time !== undefined && recurrence_time !== null) {
+      parsedRecurrenceTime = parseInt(recurrence_time, 10);
+      // If parsing fails, log a warning
+      if (isNaN(parsedRecurrenceTime)) {
+        console.warn(`Invalid recurrence_time value: ${recurrence_time}, setting to null`);
+        parsedRecurrenceTime = null;
+      }
+    }
+
     const reminder = await prisma.reminder.create({
       data: {
         title,
@@ -59,7 +70,7 @@ export async function POST(req: Request) {
         status: "pending",
         recurrence_type: recurrence_type || "none",
         recurrence_days: recurrence_days || [],
-        recurrence_time: recurrence_time
+        recurrence_time: parsedRecurrenceTime
       },
     });
 
