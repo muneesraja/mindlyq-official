@@ -30,7 +30,7 @@ For complete reminder information:
 {
   "type": "complete",
   "data": {
-    "title": "Meeting with John",
+    "title": "Meeting with John", // IMPORTANT: Always create a concise, meaningful title (3-5 words) that summarizes the reminder's purpose. NEVER use generic titles like "Untitled reminder" or "Reminder". Extract key information from the notification message to create a specific, descriptive title.
     "date": "2023-04-15", // YYYY-MM-DD format
     "time": "15:00", // 24-hour format
     "notification_message": "Don't forget your meeting with John!",
@@ -303,6 +303,56 @@ export class ReminderCreationAgent implements Agent {
           const timeUntilReminder = localDate.getTime() - now.getTime();
           const isShortTerm = timeUntilReminder < 5 * 60 * 1000; // Less than 5 minutes from now
           
+          // Check if the reminder is for a past time
+          if (dueDate < now && !isRecurring) {
+            return {
+              success: false,
+              message: "I can't create a reminder for a time that has already passed. Please provide a future date and time."
+            };
+          }
+          
+          // For recurring reminders with a past due date, adjust to the next occurrence
+          if (dueDate < now && isRecurring) {
+            console.log(`Adjusting recurring reminder from past time: ${dueDate.toISOString()}`);
+            
+            // For daily reminders, set to today at the specified time
+            // If that time has already passed today, set to tomorrow
+            if (recurrenceType === 'daily') {
+              const today = new Date();
+              today.setUTCHours(dueDate.getUTCHours(), dueDate.getUTCMinutes(), 0, 0);
+              
+              if (today < now) {
+                // Time has passed today, set to tomorrow
+                today.setDate(today.getDate() + 1);
+              }
+              
+              dueDate = today;
+              console.log(`Adjusted daily reminder to: ${dueDate.toISOString()}`);
+            } 
+            // For weekly reminders, find the next occurrence based on recurrence_days
+            else if (recurrenceType === 'weekly' && recurrenceDays && recurrenceDays.length > 0) {
+              const today = new Date();
+              const currentDayOfWeek = today.getDay(); // 0 = Sunday, 6 = Saturday
+              
+              // Find the next day of week that occurs after today
+              let daysToAdd = 7; // Default to a week if no valid day found
+              for (const day of recurrenceDays) {
+                const diff = (day - currentDayOfWeek + 7) % 7;
+                const nextOccurrence = diff === 0 ? 7 : diff; // If today, use next week
+                if (nextOccurrence < daysToAdd) {
+                  daysToAdd = nextOccurrence;
+                }
+              }
+              
+              const nextDate = new Date();
+              nextDate.setDate(nextDate.getDate() + daysToAdd);
+              nextDate.setUTCHours(dueDate.getUTCHours(), dueDate.getUTCMinutes(), 0, 0);
+              
+              dueDate = nextDate;
+              console.log(`Adjusted weekly reminder to: ${dueDate.toISOString()}`);
+            }
+          }
+          
           // Always use the calculated due date, even for short-term reminders
           let finalDueDate = dueDate;
           
@@ -311,11 +361,39 @@ export class ReminderCreationAgent implements Agent {
             // We keep the exact due_date to ensure the reminder is triggered at the right time
           }
           
+          // Generate a meaningful title if none was provided
+          let reminderTitle = title;
+          if (!reminderTitle || reminderTitle === "Untitled reminder") {
+            // Extract a meaningful title from the notification message
+            if (notification_message) {
+              // Remove common phrases like "Reminder to" or "Don't forget to"
+              const cleanedMessage = notification_message
+                .replace(/^reminder:?\s*/i, '')
+                .replace(/^don't forget:?\s*/i, '')
+                .replace(/^remember:?\s*/i, '')
+                .replace(/^time to:?\s*/i, '')
+                .replace(/^it's time to:?\s*/i, '');
+              
+              // Extract first few words (up to 5) for the title
+              const words = cleanedMessage.split(/\s+/);
+              const titleWords = words.slice(0, 5);
+              reminderTitle = titleWords.join(' ');
+              
+              // Capitalize first letter
+              reminderTitle = reminderTitle.charAt(0).toUpperCase() + reminderTitle.slice(1);
+              
+              console.log(`Generated title from notification message: "${reminderTitle}"`); 
+            } else {
+              // Fallback if no notification message
+              reminderTitle = "Reminder";
+            }
+          }
+          
           const reminder = await prisma.reminder.create({
             data: {
-              title: title || "Untitled reminder",
+              title: reminderTitle,
               due_date: finalDueDate,
-              description: notification_message || `Reminder: ${title || "Untitled reminder"}`,
+              description: notification_message || `Reminder: ${reminderTitle}`,
               user_id: userId,
               status: "active",
               recurrence_type: recurrenceType,
@@ -334,7 +412,7 @@ export class ReminderCreationAgent implements Agent {
           
           return {
             success: true,
-            message: confirmation_message || `I've set a reminder for "${title || "Untitled reminder"}" on ${userTimeString} (${userTimezone}).`,
+            message: confirmation_message || `I've set a reminder for "${reminderTitle}" on ${userTimeString} (${userTimezone}).`,
             data: {
               ...reminder,
               // Include formatted date for display

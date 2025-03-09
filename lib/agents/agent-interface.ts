@@ -56,6 +56,7 @@ export interface AgentResponse {
 export enum IntentType {
   CHAT = 'chat',
   SET_REMINDER = 'set_reminder',
+  BULK_REMINDER = 'bulk_reminder',
   MODIFY_REMINDER = 'modify_reminder',
   DELETE_REMINDER = 'delete_reminder',
   LIST_REMINDERS = 'list_reminders',

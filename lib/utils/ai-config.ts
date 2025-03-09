@@ -74,7 +74,7 @@ export function getModelForTask(taskType: 'intent' | 'creation' | 'query' | 'cha
       return GEMINI_MODELS.FLASH;
     
     case 'query':
-      return GEMINI_MODELS.QUERY;
+      return GEMINI_MODELS.FLASH;
     
     case 'chat':
     case 'modification':

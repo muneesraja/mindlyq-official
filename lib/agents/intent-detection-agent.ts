@@ -25,10 +25,25 @@ IMPORTANT RULES:
 Possible intents:
 - "chat": General conversation, greetings, or small talk
 - "set_reminder": User wants to create a new reminder
+- "bulk_reminder": User wants to create multiple reminders at once
 - "modify_reminder": User wants to change an existing reminder (time, title, or description)
 - "delete_reminder": User wants to remove an existing reminder
 - "list_reminders": User wants to see their reminders
 - "set_timezone": User is mentioning their location or timezone (e.g., "I'm from India", "My timezone is EST", "I live in New York")
+
+For "bulk_reminder" intent, look for phrases like:
+- "set multiple reminders"
+- "create several reminders"
+- "set reminders for"
+- "remind me on these dates"
+- "create reminders for"
+- "set a reminder for each"
+- "add reminders for"
+- "schedule multiple reminders"
+- "set two reminders"
+- "set three reminders"
+- "set a few reminders"
+- Any message that mentions multiple dates or times for reminders
 
 For "modify_reminder" intent, look for phrases like:
 - "change my reminder"
@@ -95,6 +110,16 @@ Examples:
      "confidence": 0.9,
      "entities": {
        "title": "meeting"
+     }
+   }
+
+6. "Set reminders for team meetings on Monday, Wednesday, and Friday at 10am"
+   {
+     "intent": "bulk_reminder",
+     "confidence": 0.95,
+     "entities": {
+       "title": "team meetings",
+       "time_expressions": ["Monday at 10am", "Wednesday at 10am", "Friday at 10am"]
      }
    }`;
 
