@@ -1,13 +1,11 @@
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+import { HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { Agent, AgentResponse } from "./agent-interface";
 import { getConversationState, updateConversationState, clearConversationState } from "../conversation-state";
 import { parseDateTime } from "../ai-date-parser";
 import { prisma } from "../db";
 import { getUserTimezone } from "../utils/date-converter";
-import { toUTC, formatUTCDate } from "../utils/date-converter";
-
-// Initialize Google AI
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
+import { toUTC, formatUTCDate, timeStringToMinutes } from "../utils/date-converter";
+import { genAI, getModelForTask, DEFAULT_SAFETY_SETTINGS } from "../utils/ai-config";
 
 const REMINDER_MODIFICATION_PROMPT = `You are MindlyQ, a helpful reminder assistant. Your job is to help users modify their existing reminders.
 
@@ -163,27 +161,10 @@ export class ReminderModificationAgent implements Agent {
         .replace("{conversation_history}", formattedHistory || "No previous conversation")
         .replace("{existing_reminders}", JSON.stringify(formattedReminders, null, 2));
       
-      // Generate AI response using Gemini Pro
+      // Generate AI response using the configured model and safety settings for reminder modification
       const model = genAI.getGenerativeModel({ 
-        model: "gemini-2.0-pro-exp",
-        safetySettings: [
-          {
-            category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-          {
-            category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-          {
-            category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-          {
-            category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-        ],
+        model: getModelForTask('modification'),
+        safetySettings: DEFAULT_SAFETY_SETTINGS,
       });
       
       const result = await model.generateContent([
@@ -294,12 +275,15 @@ export class ReminderModificationAgent implements Agent {
             // Extract date and time components
             const currentDateStr = currentDate.toISOString().split('T')[0]; // YYYY-MM-DD
             
-            // For time, prefer using the existing recurrence_time if available
-            // since it's already in the user's local time format
+            // For time, we need to convert the stored recurrence_time (minutes since midnight in UTC)
+            // back to a string format for display and modification
             let currentTimeStr;
-            if (reminder.recurrence_time) {
-              currentTimeStr = reminder.recurrence_time;
-              console.log(`- Current time from recurrence_time: ${currentTimeStr}`);
+            if (reminder.recurrence_time !== null) {
+              // Convert minutes since midnight to hours and minutes
+              const hours = Math.floor(reminder.recurrence_time / 60);
+              const minutes = reminder.recurrence_time % 60;
+              currentTimeStr = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+              console.log(`- Current time from recurrence_time (${reminder.recurrence_time} minutes): ${currentTimeStr}`);
             } else {
               // Fall back to extracting from the UTC time
               currentTimeStr = currentDate.toTimeString().split(' ')[0].substring(0, 5); // HH:MM
@@ -315,10 +299,22 @@ export class ReminderModificationAgent implements Agent {
             console.log(`- Date string to use: ${dateStr}`);
             console.log(`- Time string to use: ${timeStr}`);
             
-            // ALWAYS store the recurrence_time when modifying a reminder
-            // This ensures the time is displayed correctly in the user's timezone
-            updateData.recurrence_time = timeStr;
-            console.log(`- Setting recurrence_time to: ${timeStr}`);
+            // Create a Date object in the user's timezone with the specified time
+            const localTimeDate = new Date(`${dateStr}T${timeStr}:00`);
+            
+            // Convert to UTC
+            const utcTimeDate = toUTC(localTimeDate, userTimezone);
+            
+            // Extract hours and minutes in UTC
+            const utcHours = utcTimeDate.getUTCHours();
+            const utcMinutes = utcTimeDate.getUTCMinutes();
+            
+            // Calculate minutes since midnight in UTC
+            const recurrenceTimeMinutes = utcHours * 60 + utcMinutes;
+            
+            // Store recurrence_time as minutes since midnight in UTC
+            updateData.recurrence_time = recurrenceTimeMinutes;
+            console.log(`- Setting recurrence_time to: ${recurrenceTimeMinutes} minutes (${utcHours.toString().padStart(2, '0')}:${utcMinutes.toString().padStart(2, '0')} UTC from local ${timeStr} ${userTimezone})`);
             
             // Create local date object based on user's timezone
             const localDateStr = `${dateStr}T${timeStr}:00`;
@@ -338,7 +334,31 @@ export class ReminderModificationAgent implements Agent {
           if (dateTimeResult.success && dateTimeResult.isRecurring) {
             updateData.recurrence_type = dateTimeResult.recurrenceType || 'none';
             updateData.recurrence_days = dateTimeResult.recurrenceDays || [];
-            updateData.recurrence_time = dateTimeResult.recurrenceTime || parsed.data.new_time || reminder.recurrence_time;
+            
+            // If we haven't already set recurrence_time from the new_time field
+            if (!updateData.recurrence_time) {
+              const recurrenceTimeStr = dateTimeResult.recurrenceTime || parsed.data.new_time;
+              
+              if (recurrenceTimeStr) {
+                // Create a Date object in the user's timezone with the specified time
+                // Use current date if no date was specified
+                const currentDateStr = new Date().toISOString().split('T')[0];
+                const localTimeDate = new Date(`${currentDateStr}T${recurrenceTimeStr}:00`);
+                
+                // Convert to UTC
+                const utcTimeDate = toUTC(localTimeDate, userTimezone);
+                
+                // Calculate minutes since midnight in UTC
+                const recurrenceTimeMinutes = utcTimeDate.getUTCHours() * 60 + utcTimeDate.getUTCMinutes();
+                updateData.recurrence_time = recurrenceTimeMinutes;
+                
+                console.log(`- Setting recurrence_time from AI parser: ${recurrenceTimeMinutes} minutes (from ${recurrenceTimeStr} ${userTimezone})`);
+              } else if (reminder.recurrence_time !== null) {
+                // Keep the existing recurrence_time if available
+                updateData.recurrence_time = reminder.recurrence_time;
+                console.log(`- Keeping existing recurrence_time: ${reminder.recurrence_time} minutes`);
+              }
+            }
           }
           
           // Update the reminder

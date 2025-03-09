@@ -27,12 +27,16 @@ export interface FormattedReminderOutput {
 export interface QueryContext {
   filter: string;
   sorting: string;
-  pagination: string;
-  search: string | null;
-  timeRange: {
+  pagination?: string;
+  search?: string | null;
+  searchTerms?: string[];
+  timeRange?: {
     before: string | null;
     after: string | null;
   } | null;
+  hasMorePages?: boolean;
+  currentPage?: number;
+  totalPages?: number;
 }
 
 /**

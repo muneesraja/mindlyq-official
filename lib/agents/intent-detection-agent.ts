@@ -1,11 +1,9 @@
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+import { HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { Agent, AgentResponse, IntentType, IntentDetectionResult } from "./agent-interface";
 import { getConversationState } from "../conversation-state";
 import { getUserTimezone } from "../utils/date-converter";
 import { formatUTCDate } from "../utils/date-converter";
-
-// Initialize Google AI
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
+import { genAI, getModelForTask, DEFAULT_SAFETY_SETTINGS } from "../utils/ai-config";
 
 const INTENT_DETECTION_PROMPT = `You are an intent detection system for a reminder application called MindlyQ.
 Your job is to analyze user messages and determine what they want to do.
@@ -140,27 +138,10 @@ export class IntentDetectionAgent implements Agent {
         .replace("{timezone}", userTimezone)
         .replace("{conversation_history}", formattedHistory || "No previous conversation");
       
-      // Generate AI response using Gemini Flash for fast intent detection
+      // Generate AI response using the configured model and safety settings for intent detection
       const model = genAI.getGenerativeModel({ 
-        model: "gemini-2.0-flash-exp",
-        safetySettings: [
-          {
-            category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-          {
-            category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-          {
-            category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-          {
-            category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-        ],
+        model: getModelForTask('intent'),
+        safetySettings: DEFAULT_SAFETY_SETTINGS,
       });
       
       const result = await model.generateContent([

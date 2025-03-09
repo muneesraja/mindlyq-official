@@ -1,13 +1,81 @@
 import { parseISO, format, isValid, parse, getYear, getMonth, getDate, getHours, getMinutes, getSeconds } from 'date-fns';
 import { toZonedTime, fromZonedTime, formatInTimeZone } from 'date-fns-tz';
 import { prisma } from '../db';
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
-
-// Initialize Google AI
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
+import { HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+import { genAI, getModelForTask } from "./ai-config";
 
 // Default timezone to use if user doesn't have a preference
 export const DEFAULT_TIMEZONE = 'UTC';
+
+/**
+ * Converts a time string (HH:MM) to minutes since midnight
+ * 
+ * IMPORTANT: This function is timezone-agnostic. When used in the application,
+ * ensure that you're working with UTC times for consistency. The returned value
+ * represents minutes since midnight in the same timezone as the input string.
+ * 
+ * @param timeString Time string in format HH:MM (24-hour format)
+ * @returns Minutes since midnight as an integer, or null if invalid format
+ */
+export function timeStringToMinutes(timeString: string | null | undefined): number | null {
+  if (!timeString) return null;
+  
+  // Handle various time formats
+  const timeRegex = /^(\d{1,2}):(\d{2})(?:\s*(am|pm))?$/i;
+  const match = timeString.trim().match(timeRegex);
+  
+  if (!match) return null;
+  
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const meridiem = match[3]?.toLowerCase();
+  
+  // Handle 12-hour format if am/pm is specified
+  if (meridiem) {
+    if (meridiem === 'pm' && hours < 12) hours += 12;
+    if (meridiem === 'am' && hours === 12) hours = 0;
+  }
+  
+  // Validate hours and minutes
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+  
+  return hours * 60 + minutes;
+}
+
+/**
+ * Converts minutes since midnight to a time string (HH:MM)
+ * 
+ * IMPORTANT: This function is timezone-agnostic. When used in the application,
+ * ensure that you're working with UTC times for consistency. The returned string
+ * represents a time in the same timezone as the input minutes value.
+ * 
+ * @param minutes Minutes since midnight as an integer
+ * @param format24Hour Whether to use 24-hour format (default: true)
+ * @returns Time string in format HH:MM
+ */
+export function minutesToTimeString(minutes: number | null | undefined, format24Hour: boolean = true): string | null {
+  if (minutes === null || minutes === undefined) return null;
+  
+  // Validate minutes
+  if (minutes < 0 || minutes >= 24 * 60) {
+    return null;
+  }
+  
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  
+  if (format24Hour) {
+    // 24-hour format: HH:MM
+    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+  } else {
+    // 12-hour format: HH:MM AM/PM
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours % 12 || 12; // Convert 0 to 12 for 12 AM
+    return `${displayHours}:${mins.toString().padStart(2, '0')} ${period}`;
+  }
+}
 
 // Common timezone mappings for quick reference
 const COMMON_TIMEZONE_MAPPINGS: Record<string, string> = {
@@ -409,7 +477,7 @@ export async function detectTimezoneFromLocation(locationDescription: string): P
   // If no direct mapping, use AI to detect timezone
   try {
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
+      model: getModelForTask('timezone'),
       safetySettings: [
         {
           category: HarmCategory.HARM_CATEGORY_HARASSMENT,

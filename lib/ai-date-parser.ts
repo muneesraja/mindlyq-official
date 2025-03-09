@@ -1,9 +1,7 @@
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+import { HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { formatUTCDate, getUserTimezone } from './utils/date-converter';
 import { parseRelativeTimeExpressions, calculateDate, formatDateForDisplay, formatRecurrenceForDisplay, TimeExpression, DateCalculationResult } from './utils/date-calculator';
-
-// Initialize Google AI
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
+import { genAI, getModelForTask, DEFAULT_SAFETY_SETTINGS } from './utils/ai-config';
 
 interface DateTimeParseResult {
   success: boolean;
@@ -138,27 +136,10 @@ export async function parseDateTime(text: string, userId?: string): Promise<Date
     const prompt = DATETIME_SYSTEM_PROMPT
       .replace("{current_time}", formattedUTCTime);
     
-    // Generate AI response
+    // Generate AI response using the configured model and safety settings for date parsing
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.0-flash-exp",
-      safetySettings: [
-        {
-          category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-          threshold: HarmBlockThreshold.BLOCK_NONE,
-        },
-        {
-          category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-          threshold: HarmBlockThreshold.BLOCK_NONE,
-        },
-        {
-          category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-          threshold: HarmBlockThreshold.BLOCK_NONE,
-        },
-        {
-          category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-          threshold: HarmBlockThreshold.BLOCK_NONE,
-        },
-      ],
+      model: getModelForTask('dateParser'),
+      safetySettings: DEFAULT_SAFETY_SETTINGS,
     });
     
     const result = await model.generateContent([
@@ -333,7 +314,7 @@ function processAIResponse(aiResponse: any, timezone: string = 'UTC'): DateTimeP
       } else if (timeExp.type === 'relative') {
         // Handle relative time expressions
         timeExpression = {
-          type: 'relative',
+          type: 'relative_time',
           value: timeExp.value || 1,
           unit: timeExp.unit || 'day',
           time: timeExp.time || '09:00'

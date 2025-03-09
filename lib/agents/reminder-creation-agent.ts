@@ -1,14 +1,12 @@
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+import { HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { Agent, AgentResponse } from "./agent-interface";
 import { getConversationState, updateConversationState, updateReminderData, clearConversationState } from "../conversation-state";
 import { parseDateTime, formatDateForHumans, formatRecurrenceForHumans } from "../ai-date-parser";
 import { prisma } from "../db";
 import { getUserTimezone } from "../utils/date-converter";
-import { toUTC, fromUTC, formatUTCDate } from "../utils/date-converter";
+import { toUTC, fromUTC, formatUTCDate, timeStringToMinutes } from "../utils/date-converter";
 import { calculateDate, formatDateForDisplay, TimeExpression } from "../utils/date-calculator";
-
-// Initialize Google AI
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
+import { genAI, getModelForTask, DEFAULT_SAFETY_SETTINGS } from "../utils/ai-config";
 
 const REMINDER_CREATION_PROMPT = `You are MindlyQ, a helpful reminder assistant. Your job is to help users set reminders through natural language conversation.
 
@@ -174,27 +172,10 @@ export class ReminderCreationAgent implements Agent {
         .replace("{conversation_history}", formattedHistory || "No previous conversation")
         .replace("{known_info}", JSON.stringify(knownInfo, null, 2) || "No known information");
       
-      // Generate AI response using Gemini Pro for detailed processing
+      // Generate AI response using the configured model and safety settings for reminder creation
       const model = genAI.getGenerativeModel({ 
-        model: "gemini-2.0-flash-exp",
-        safetySettings: [
-          {
-            category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-          {
-            category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-          {
-            category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-          {
-            category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-        ],
+        model: getModelForTask('creation'),
+        safetySettings: DEFAULT_SAFETY_SETTINGS,
       });
       
       const result = await model.generateContent([
@@ -298,7 +279,24 @@ export class ReminderCreationAgent implements Agent {
           const isRecurring = knownInfo.isRecurring || false;
           const recurrenceType = knownInfo.recurrenceType || 'none';
           const recurrenceDays = knownInfo.recurrenceDays || [];
-          const recurrenceTime = knownInfo.recurrenceTime || time;
+          
+          // Convert recurrence_time from string to minutes since midnight in UTC
+          const timeString = knownInfo.recurrenceTime || time;
+          
+          // Create a Date object in the user's timezone with the specified time
+          const localTimeDate = new Date(`${date}T${timeString}:00`);
+          
+          // Convert to UTC
+          const utcTimeDate = toUTC(localTimeDate, userTimezone);
+          
+          // Extract hours and minutes in UTC
+          const utcHours = utcTimeDate.getUTCHours();
+          const utcMinutes = utcTimeDate.getUTCMinutes();
+          
+          // Calculate minutes since midnight in UTC
+          const recurrenceTimeMinutes = utcHours * 60 + utcMinutes;
+          
+          console.log(`Converting recurrence time from local (${timeString} ${userTimezone}) to UTC: ${utcHours.toString().padStart(2, '0')}:${utcMinutes.toString().padStart(2, '0')} (${recurrenceTimeMinutes} minutes since midnight)`);
           
           // Handle short-term reminders (like "in 2 minutes")
           const now = new Date();
@@ -322,11 +320,11 @@ export class ReminderCreationAgent implements Agent {
               status: "active",
               recurrence_type: recurrenceType,
               recurrence_days: recurrenceDays,
-              recurrence_time: recurrenceTime
+              recurrence_time: recurrenceTimeMinutes
             }
           });
           
-          console.log(`Created reminder with due_date: ${finalDueDate.toISOString()} and recurrence_time: ${recurrenceTime}`);
+          console.log(`Created reminder with due_date: ${finalDueDate.toISOString()} and recurrence_time: ${recurrenceTimeMinutes} minutes (${timeString})`);
           
           // Clear conversation state since we've completed the reminder
           await clearConversationState(userId);

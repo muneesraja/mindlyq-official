@@ -1,0 +1,9 @@
+/*
+  Warnings:
+
+  - The `recurrence_time` column on the `Reminder` table would be dropped and recreated. This will lead to data loss if there is data in the column.
+
+*/
+-- AlterTable
+ALTER TABLE "Reminder" DROP COLUMN "recurrence_time",
+ADD COLUMN     "recurrence_time" INTEGER;

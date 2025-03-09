@@ -1,12 +1,5 @@
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
-
-// Initialize Google AI
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
-
-// Define the model to use
-// Note: If the API version changes, we might need to update this
-// Current available models include: gemini-pro, gemini-1.5-pro, etc.
-const MODEL_NAME = "gemini-1.5-pro";
+import { HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+import { genAI, getModelForTask, DEFAULT_SAFETY_SETTINGS, DEFAULT_GENERATION_CONFIG } from "./ai-config";
 
 /**
  * Interface for reminder query options
@@ -289,39 +282,15 @@ export async function generateSecureQueryFromUserMessage(message: string, userId
       DO NOT include any explanation, just return the JSON object.
     `;
 
-    // Call the Gemini model
-    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
-    
-    const generationConfig = {
-      temperature: 0.1,
-      topK: 32,
-      topP: 0.95,
-      maxOutputTokens: 1024,
-    };
-    
-    const safetySettings = [
-      {
-        category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-        threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-      },
-      {
-        category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-        threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-      },
-      {
-        category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-        threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-      },
-      {
-        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-        threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-      },
-    ];
+    // Call the Gemini model using the centralized configuration and safety settings
+    const model = genAI.getGenerativeModel({ 
+      model: getModelForTask('query'),
+      safetySettings: DEFAULT_SAFETY_SETTINGS
+    });
     
     const result = await model.generateContent({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig,
-      safetySettings,
+      generationConfig: DEFAULT_GENERATION_CONFIG,
     });
     
     const response = result.response;

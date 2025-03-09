@@ -2,7 +2,7 @@ import { Agent, AgentResponse } from "./agent-interface";
 import { prisma } from "../db";
 import { formatDateForHumans, formatRecurrenceForHumans } from "../ai-date-parser";
 import { getUserTimezone } from "../utils/date-converter";
-import { fromUTC, formatUTCDate } from "../utils/date-converter";
+import { fromUTC, formatUTCDate, minutesToTimeString } from "../utils/date-converter";
 import { getConversationState, updateConversationState, clearConversationState } from "../conversation-state";
 import { ReminderQueryOptions } from "../utils/reminder-query-builder";
 import { AIPrismaQuery, createSecurePrismaQueryBuilder, logPrismaQueryAttempt } from "../utils/ai-prisma-query-builder";
@@ -223,9 +223,13 @@ export class ReminderListingAgent implements Agent {
         console.log(`- Original UTC date from DB: ${date.toISOString()}`);
         console.log(`- User timezone: ${userTimezone}`);
         
-        // Check if reminder has recurrence_time (which is in local time format HH:MM)
-        if (reminder.recurrence_time) {
-          console.log(`- Has recurrence_time: ${reminder.recurrence_time}`);
+        // Check if reminder has recurrence_time (which is in minutes since midnight UTC)
+        if (reminder.recurrence_time !== null) {
+          // Convert minutes to HH:MM format for logging
+          const hours = Math.floor(reminder.recurrence_time / 60);
+          const mins = reminder.recurrence_time % 60;
+          const timeStr = `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+          console.log(`- Has recurrence_time: ${reminder.recurrence_time} minutes (${timeStr} UTC)`);
         }
         
         // Format date using our date-converter utility
@@ -236,17 +240,30 @@ export class ReminderListingAgent implements Agent {
           'MMM d, yyyy h:mm aa' : 
           'MMM d h:mm aa';
         
-        // Use recurrence_time if available for display (since it's already in user's local time format)
+        // Use recurrence_time if available for display (converting from UTC minutes to local time)
         let dueDate;
-        if (reminder.recurrence_time) {
+        if (reminder.recurrence_time !== null) {
           // Extract just the date part from the formatted date
           const datePart = formatUTCDate(date, userTimezone, 'MMM d');
-          // Use the recurrence_time which is already in local time
-          const [hours, minutes] = reminder.recurrence_time.split(':').map(Number);
-          const period = hours >= 12 ? 'PM' : 'AM';
-          const hour12 = hours % 12 || 12;
-          dueDate = `${datePart} ${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
-          console.log(`- Using recurrence_time for display: ${dueDate}`);
+          
+          // Create a Date object with the current date and the recurrence time in UTC
+          const utcHours = Math.floor(reminder.recurrence_time / 60);
+          const utcMinutes = reminder.recurrence_time % 60;
+          
+          // Create a date object with today's date and the recurrence time in UTC
+          const utcDate = new Date();
+          utcDate.setUTCHours(utcHours, utcMinutes, 0, 0);
+          
+          // Format the time in the user's timezone
+          const timeInUserTz = new Intl.DateTimeFormat('en-US', {
+            timeZone: userTimezone,
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+          }).format(utcDate);
+          
+          dueDate = `${datePart} ${timeInUserTz}`;
+          console.log(`- Using recurrence_time for display: ${dueDate} (from ${reminder.recurrence_time} minutes UTC)`);
         } else {
           // Use standard UTC to local conversion
           dueDate = formatUTCDate(date, userTimezone, formatString);
@@ -341,7 +358,6 @@ export class ReminderListingAgent implements Agent {
           queryContext: {
             filter: filterType,
             sorting: sortingInfo,
-            timeDescription,
             searchTerms: prismaQuery.queryContext?.searchTerms,
             hasMorePages,
             currentPage,
@@ -363,7 +379,6 @@ export class ReminderListingAgent implements Agent {
           queryContext: {
             filter: filterType,
             sorting: sortingInfo,
-            timeDescription,
             searchTerms: prismaQuery.queryContext?.searchTerms,
             hasMorePages,
             currentPage,
@@ -385,7 +400,6 @@ export class ReminderListingAgent implements Agent {
           queryContext: {
             filter: filterType,
             sorting: sortingInfo,
-            timeDescription,
             searchTerms: prismaQuery.queryContext?.searchTerms,
             hasMorePages,
             currentPage,

@@ -1,12 +1,7 @@
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+import { HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { getUserTimezone } from "./date-converter";
 import { Prisma } from "@prisma/client";
-
-// Initialize Google AI
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
-
-// Define the model to use
-const MODEL_NAME = "gemini-2.0-pro-exp-02-05";
+import { genAI, getModelForTask } from "./ai-config";
 
 /**
  * Interface for AI-generated Prisma query
@@ -235,8 +230,8 @@ export async function generatePrismaQueryFromUserMessage(message: string, userId
       DO NOT include any explanation, just return the JSON object.
     `;
 
-    // Call the Gemini model
-    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
+    // Call the Gemini model using the centralized configuration
+    const model = genAI.getGenerativeModel({ model: getModelForTask('query') });
     
     const generationConfig = {
       temperature: 0.1,
@@ -312,7 +307,7 @@ export async function generatePrismaQueryFromUserMessage(message: string, userId
         filter: "active reminders",
         sorting: "oldest first",
         timeDescription: "all time",
-        searchTerms: null
+        searchTerms: undefined
       }
     };
   }
