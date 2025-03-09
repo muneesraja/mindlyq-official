@@ -17,7 +17,7 @@ model Reminder {
   status          String    @default("active")
   recurrence_type String?
   recurrence_days Int[]     @default([])
-  recurrence_time String?
+  recurrence_time Int?
   last_sent       DateTime?
   created_at      DateTime  @default(now())
   updated_at      DateTime  @updatedAt

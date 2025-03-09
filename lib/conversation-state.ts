@@ -22,6 +22,9 @@ export interface ConversationState {
     recurrenceTime?: string;
     [key: string]: any;
   };
+  partialData?: {
+    [key: string]: any;
+  };
   last_updated: Date;
 }
 
@@ -54,9 +57,10 @@ export function getConversationState(userId: string): ConversationState | undefi
  * Update the conversation state with a new message
  * @param userId The user's ID
  * @param message The message to add
+ * @param partialData Optional partial data to store
  * @returns The updated conversation state
  */
-export function updateConversationState(userId: string, message: ConversationMessage): ConversationState {
+export function updateConversationState(userId: string, message: ConversationMessage, partialData?: any): ConversationState {
   let state = conversationStates.get(userId);
   
   if (!state) {
@@ -79,6 +83,19 @@ export function updateConversationState(userId: string, message: ConversationMes
   state.history.push(message);
   if (state.history.length > 10) {
     state.history.shift();
+  }
+  
+  // Update partial data if provided
+  if (partialData) {
+    if (!state.partialData) {
+      state.partialData = {};
+    }
+    
+    // Merge the new partial data with existing data
+    state.partialData = {
+      ...state.partialData,
+      ...partialData
+    };
   }
   
   return state;

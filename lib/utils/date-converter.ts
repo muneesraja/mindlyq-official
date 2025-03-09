@@ -1,12 +1,81 @@
-import { parseISO, format, isValid, parse } from 'date-fns';
+import { parseISO, format, isValid, parse, getYear, getMonth, getDate, getHours, getMinutes, getSeconds } from 'date-fns';
+import { toZonedTime, fromZonedTime, formatInTimeZone } from 'date-fns-tz';
 import { prisma } from '../db';
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
-
-// Initialize Google AI
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
+import { HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+import { genAI, getModelForTask } from "./ai-config";
 
 // Default timezone to use if user doesn't have a preference
 export const DEFAULT_TIMEZONE = 'UTC';
+
+/**
+ * Converts a time string (HH:MM) to minutes since midnight
+ * 
+ * IMPORTANT: This function is timezone-agnostic. When used in the application,
+ * ensure that you're working with UTC times for consistency. The returned value
+ * represents minutes since midnight in the same timezone as the input string.
+ * 
+ * @param timeString Time string in format HH:MM (24-hour format)
+ * @returns Minutes since midnight as an integer, or null if invalid format
+ */
+export function timeStringToMinutes(timeString: string | null | undefined): number | null {
+  if (!timeString) return null;
+  
+  // Handle various time formats
+  const timeRegex = /^(\d{1,2}):(\d{2})(?:\s*(am|pm))?$/i;
+  const match = timeString.trim().match(timeRegex);
+  
+  if (!match) return null;
+  
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const meridiem = match[3]?.toLowerCase();
+  
+  // Handle 12-hour format if am/pm is specified
+  if (meridiem) {
+    if (meridiem === 'pm' && hours < 12) hours += 12;
+    if (meridiem === 'am' && hours === 12) hours = 0;
+  }
+  
+  // Validate hours and minutes
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+  
+  return hours * 60 + minutes;
+}
+
+/**
+ * Converts minutes since midnight to a time string (HH:MM)
+ * 
+ * IMPORTANT: This function is timezone-agnostic. When used in the application,
+ * ensure that you're working with UTC times for consistency. The returned string
+ * represents a time in the same timezone as the input minutes value.
+ * 
+ * @param minutes Minutes since midnight as an integer
+ * @param format24Hour Whether to use 24-hour format (default: true)
+ * @returns Time string in format HH:MM
+ */
+export function minutesToTimeString(minutes: number | null | undefined, format24Hour: boolean = true): string | null {
+  if (minutes === null || minutes === undefined) return null;
+  
+  // Validate minutes
+  if (minutes < 0 || minutes >= 24 * 60) {
+    return null;
+  }
+  
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  
+  if (format24Hour) {
+    // 24-hour format: HH:MM
+    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+  } else {
+    // 12-hour format: HH:MM AM/PM
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours % 12 || 12; // Convert 0 to 12 for 12 AM
+    return `${displayHours}:${mins.toString().padStart(2, '0')} ${period}`;
+  }
+}
 
 // Common timezone mappings for quick reference
 const COMMON_TIMEZONE_MAPPINGS: Record<string, string> = {
@@ -88,97 +157,65 @@ const COMMON_TIMEZONE_MAPPINGS: Record<string, string> = {
   "canada": "America/Toronto",
 };
 
-// Define custom timezone conversion functions since date-fns-tz ESM exports are not working with bun
-
 /**
  * Convert a date from a specific timezone to UTC
+ * @param date Date in the source timezone
+ * @param timeZone Source timezone identifier
+ * @returns Date in UTC
  */
 function zonedTimeToUtc(date: Date, timeZone: string): Date {
-  // Get the date components in the source timezone
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: 'numeric',
-    second: 'numeric',
-    hour12: false
-  });
-  
-  // Format the date to get parts in the source timezone
-  const parts = formatter.formatToParts(date);
-  
-  // Extract the parts
-  const partValues: Record<string, string> = {};
-  for (const part of parts) {
-    partValues[part.type] = part.value;
+  try {
+    // Use date-fns-tz to convert from zoned time to UTC
+    return fromZonedTime(date, timeZone);
+  } catch (error) {
+    console.error(`Error in zonedTimeToUtc: ${error}`);
+    // Fallback implementation if date-fns-tz fails
+    const offset = new Date().getTimezoneOffset() * 60000;
+    return new Date(date.getTime() - offset);
   }
-  
-  // Get the date components
-  const year = parseInt(partValues.year);
-  const month = parseInt(partValues.month) - 1; // Month is 0-indexed in Date
-  const day = parseInt(partValues.day);
-  const hour = parseInt(partValues.hour);
-  const minute = parseInt(partValues.minute);
-  const second = parseInt(partValues.second);
-  
-  // Create a UTC date with these components
-  return new Date(Date.UTC(year, month, day, hour, minute, second));
 }
 
 /**
  * Format a date in a specific timezone
+ * @param date Date to format
+ * @param timeZone Target timezone
+ * @param formatStr Format string for date-fns
+ * @returns Formatted date string
  */
-function formatInTimeZone(date: Date, timeZone: string, formatStr: string): string {
-  // Convert to the target timezone first
-  const zonedDate = utcToZonedTime(date, timeZone);
-  
-  // Use date-fns format with the zoned date
-  return format(zonedDate, formatStr);
+function formatTz(date: Date, timeZone: string, formatStr: string): string {
+  try {
+    // Use date-fns-tz to format in the target timezone
+    return formatInTimeZone(date, timeZone, formatStr);
+  } catch (error) {
+    console.error(`Error in formatTz: ${error}`);
+    // Fallback to basic formatting if date-fns-tz fails
+    return format(date, formatStr);
+  }
 }
 
 /**
  * Convert a UTC date to a specific timezone
- * 
- * This function takes a UTC date and returns a JavaScript Date object
- * that represents the same moment in time, but with the date/time components
- * adjusted to display correctly in the target timezone.
+ * @param date Date in UTC
+ * @param timeZone Target timezone
+ * @returns Date adjusted for display in the target timezone
  */
 function utcToZonedTime(date: Date, timeZone: string): Date {
-  // Create a formatter that will parse this UTC date in the target timezone
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: 'numeric',
-    second: 'numeric',
-    hour12: false
-  });
-  
-  // Format the date to get parts in the target timezone
-  const parts = formatter.formatToParts(date);
-  
-  // Extract the parts
-  const partValues: Record<string, string> = {};
-  for (const part of parts) {
-    partValues[part.type] = part.value;
+  try {
+    // Use date-fns-tz to convert UTC to zoned time
+    return toZonedTime(date, timeZone);
+  } catch (error) {
+    console.error(`Error in utcToZonedTime: ${error}`);
+    // Fallback implementation if date-fns-tz fails
+    const year = getYear(date);
+    const month = getMonth(date);
+    const day = getDate(date);
+    const hour = getHours(date);
+    const minute = getMinutes(date);
+    const second = getSeconds(date);
+    
+    // Create a date in the local timezone with these components
+    return new Date(year, month, day, hour, minute, second);
   }
-  
-  // Create a new date in the target timezone
-  const year = parseInt(partValues.year);
-  const month = parseInt(partValues.month) - 1; // Month is 0-indexed in Date
-  const day = parseInt(partValues.day);
-  const hour = parseInt(partValues.hour);
-  const minute = parseInt(partValues.minute);
-  const second = parseInt(partValues.second);
-  
-  // Create a date object with local components
-  const localDate = new Date(year, month, day, hour, minute, second);
-  
-  return localDate;
 }
 
 /**
@@ -222,7 +259,7 @@ export function formatUTCDate(
   if (!isValid(utcDate)) {
     return 'Invalid date';
   }
-  return formatInTimeZone(utcDate, timezone, formatString);
+  return formatTz(utcDate, timezone, formatString);
 }
 
 /**
@@ -399,8 +436,11 @@ export async function setUserTimezone(userId: string, timezone: string): Promise
  * @returns Whether the timezone is valid
  */
 export function isValidTimezone(timezone: string): boolean {
+  if (!timezone) return false;
+  
   try {
-    Intl.DateTimeFormat(undefined, { timeZone: timezone });
+    // Try to format a date with the timezone using date-fns-tz
+    formatInTimeZone(new Date(), timezone, 'yyyy-MM-dd');
     return true;
   } catch (error) {
     return false;
@@ -437,7 +477,7 @@ export async function detectTimezoneFromLocation(locationDescription: string): P
   // If no direct mapping, use AI to detect timezone
   try {
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
+      model: getModelForTask('timezone'),
       safetySettings: [
         {
           category: HarmCategory.HARM_CATEGORY_HARASSMENT,

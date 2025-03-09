@@ -1,12 +1,10 @@
 import { Agent, AgentResponse } from "./agent-interface";
 import { setUserTimezone, detectTimezoneFromLocation } from "../utils/date-converter";
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+import { HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { getConversationState, updateReminderData } from "../conversation-state";
 import { ReminderCreationAgent } from "./reminder-creation-agent";
 import { formatUTCDate } from "../utils/date-converter";
-
-// Initialize Google AI
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
+import { genAI, getModelForTask, DEFAULT_SAFETY_SETTINGS } from "../utils/ai-config";
 
 /**
  * Agent responsible for detecting and setting user timezone
@@ -112,13 +110,8 @@ export class TimezoneAgent implements Agent {
       
       // If no direct timezone abbreviation, use AI to extract location
       const model = genAI.getGenerativeModel({
-        model: "gemini-1.5-flash",
-        safetySettings: [
-          {
-            category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-            threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-          },
-        ],
+        model: getModelForTask('timezone'),
+        safetySettings: DEFAULT_SAFETY_SETTINGS,
       });
       
       const prompt = `

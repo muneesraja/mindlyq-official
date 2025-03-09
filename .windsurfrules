@@ -1,1 +1,5 @@
 1. Use bun as your package manager while developing this project.
+2. Use TypeScript for static type checking and code completion.
+3. We will be using Gemini models to through out this workspace.
+4. OpenAI should be avoided at all costs.
+5. While storing date or time in the database, use UTC time.

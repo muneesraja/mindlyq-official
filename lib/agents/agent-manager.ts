@@ -1,6 +1,7 @@
 import { Agent, AgentResponse, IntentType } from "./agent-interface";
 import { IntentDetectionAgent } from "./intent-detection-agent";
 import { ReminderCreationAgent } from "./reminder-creation-agent";
+import { BulkReminderCreationAgent } from "./bulk-reminder-creation-agent";
 import { ReminderListingAgent } from "./reminder-listing-agent";
 import { ReminderModificationAgent } from "./reminder-modification-agent";
 import { ReminderDeletionAgent } from "./reminder-deletion-agent";
@@ -14,6 +15,7 @@ import { updateConversationState } from "../conversation-state";
 export class AgentManager {
   private intentDetectionAgent: IntentDetectionAgent;
   private reminderCreationAgent: ReminderCreationAgent;
+  private bulkReminderCreationAgent: BulkReminderCreationAgent;
   private reminderListingAgent: ReminderListingAgent;
   private reminderModificationAgent: ReminderModificationAgent;
   private reminderDeletionAgent: ReminderDeletionAgent;
@@ -23,6 +25,7 @@ export class AgentManager {
   constructor() {
     this.intentDetectionAgent = new IntentDetectionAgent();
     this.reminderCreationAgent = new ReminderCreationAgent();
+    this.bulkReminderCreationAgent = new BulkReminderCreationAgent();
     this.reminderListingAgent = new ReminderListingAgent();
     this.reminderModificationAgent = new ReminderModificationAgent();
     this.reminderDeletionAgent = new ReminderDeletionAgent();
@@ -68,6 +71,11 @@ export class AgentManager {
         case IntentType.SET_REMINDER:
           console.log("Routing to reminder creation agent");
           agentResponse = await this.reminderCreationAgent.process(message, userId);
+          break;
+          
+        case IntentType.BULK_REMINDER:
+          console.log("Routing to bulk reminder creation agent");
+          agentResponse = await this.bulkReminderCreationAgent.process(message, userId);
           break;
           
         case IntentType.LIST_REMINDERS:

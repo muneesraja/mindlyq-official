@@ -1,13 +1,12 @@
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+import { HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { Agent, AgentResponse } from "./agent-interface";
 import { getConversationState, updateConversationState, updateReminderData, clearConversationState } from "../conversation-state";
-import { parseDateTime } from "../ai-date-parser";
+import { parseDateTime, formatDateForHumans, formatRecurrenceForHumans } from "../ai-date-parser";
 import { prisma } from "../db";
 import { getUserTimezone } from "../utils/date-converter";
-import { toUTC, fromUTC, formatUTCDate } from "../utils/date-converter";
-
-// Initialize Google AI
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
+import { toUTC, fromUTC, formatUTCDate, timeStringToMinutes } from "../utils/date-converter";
+import { calculateDate, formatDateForDisplay, TimeExpression } from "../utils/date-calculator";
+import { genAI, getModelForTask, DEFAULT_SAFETY_SETTINGS } from "../utils/ai-config";
 
 const REMINDER_CREATION_PROMPT = `You are MindlyQ, a helpful reminder assistant. Your job is to help users set reminders through natural language conversation.
 
@@ -31,7 +30,7 @@ For complete reminder information:
 {
   "type": "complete",
   "data": {
-    "title": "Meeting with John",
+    "title": "Meeting with John", // IMPORTANT: Always create a concise, meaningful title (3-5 words) that summarizes the reminder's purpose. NEVER use generic titles like "Untitled reminder" or "Reminder". Extract key information from the notification message to create a specific, descriptive title.
     "date": "2023-04-15", // YYYY-MM-DD format
     "time": "15:00", // 24-hour format
     "notification_message": "Don't forget your meeting with John!",
@@ -110,7 +109,7 @@ export class ReminderCreationAgent implements Agent {
       }
       
       // First, try to parse date and time from the message
-      const dateTimeResult = await parseDateTime(message);
+      const dateTimeResult = await parseDateTime(message, userId);
       
       // Get conversation state
       const conversationState = await getConversationState(userId);
@@ -129,7 +128,7 @@ export class ReminderCreationAgent implements Agent {
       if (dateTimeResult.success && dateTimeResult.date) {
         const date = dateTimeResult.date;
         
-        // Format date and time
+        // Format date and time using our date-calculator module
         const dateStr = date.toISOString().split('T')[0]; // YYYY-MM-DD
         const timeStr = date.toTimeString().split(' ')[0].substring(0, 5); // HH:MM
         
@@ -142,6 +141,13 @@ export class ReminderCreationAgent implements Agent {
           knownInfo.recurrenceType = dateTimeResult.recurrenceType;
           knownInfo.recurrenceDays = dateTimeResult.recurrenceDays;
           knownInfo.recurrenceTime = dateTimeResult.recurrenceTime;
+          
+          // Add human-readable recurrence description
+          knownInfo.recurrenceDescription = formatRecurrenceForHumans(
+            dateTimeResult.recurrenceType || 'daily',
+            dateTimeResult.recurrenceDays || [],
+            dateTimeResult.recurrenceTime || '09:00'
+          );
         }
       }
       
@@ -166,27 +172,10 @@ export class ReminderCreationAgent implements Agent {
         .replace("{conversation_history}", formattedHistory || "No previous conversation")
         .replace("{known_info}", JSON.stringify(knownInfo, null, 2) || "No known information");
       
-      // Generate AI response using Gemini Pro for detailed processing
+      // Generate AI response using the configured model and safety settings for reminder creation
       const model = genAI.getGenerativeModel({ 
-        model: "gemini-2.0-pro-exp",
-        safetySettings: [
-          {
-            category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-          {
-            category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-          {
-            category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-          {
-            category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-        ],
+        model: getModelForTask('creation'),
+        safetySettings: DEFAULT_SAFETY_SETTINGS,
       });
       
       const result = await model.generateContent([
@@ -248,65 +237,182 @@ export class ReminderCreationAgent implements Agent {
             };
           }
           
-          // Create the reminder in the database
-          // First create a local date based on the user's input
-          const localDate = new Date(`${date}T${time}:00`);
+          // Create the reminder in the database using our date-calculator module
+          // First, create a TimeExpression for the specific date and time
+          const timeExpression: TimeExpression = {
+            type: 'specific_date',
+            value: date,
+            date: date,
+            time: time
+          };
           
-          // Convert the local date to UTC based on the user's timezone using our new utility
-          const dueDate = toUTC(localDate, userTimezone);
+          // Calculate the actual date using date-fns
+          const calculationResult = calculateDate(timeExpression, new Date(), userTimezone);
+          
+          // Use the calculated date if successful, otherwise fall back to manual conversion
+          let dueDate: Date;
+          
+          if (calculationResult.success && calculationResult.date) {
+            dueDate = calculationResult.date;
+            console.log(`Date calculated using date-calculator module: ${dueDate.toISOString()}`);
+          } else {
+            // Fallback to manual conversion
+            const localDate = new Date(`${date}T${time}:00`);
+            dueDate = toUTC(localDate, userTimezone);
+            console.log(`Date calculated using manual conversion: ${dueDate.toISOString()}`);
+          }
           
           console.log(`Converting reminder time from ${userTimezone} to UTC:`);
-          console.log(`- Local time: ${localDate.toISOString()}`);
+          console.log(`- Original date string: ${date}T${time}:00`);
           console.log(`- UTC time: ${dueDate.toISOString()}`);
+          console.log(`- User timezone: ${userTimezone}`);
+          
+          // Log any date shifts for debugging
+          const localDate = new Date(`${date}T${time}:00`);
+          const localDateDay = localDate.getDate();
+          const utcDateDay = dueDate.getUTCDate();
+          if (localDateDay !== utcDateDay) {
+            console.log(`WARNING: Date day shifted from ${localDateDay} to ${utcDateDay} during timezone conversion`);
+          }
           
           // Check if this is a recurring reminder
           const isRecurring = knownInfo.isRecurring || false;
           const recurrenceType = knownInfo.recurrenceType || 'none';
           const recurrenceDays = knownInfo.recurrenceDays || [];
-          const recurrenceTime = knownInfo.recurrenceTime || time;
           
-          // Check if this is an immediate reminder (like "in 2 minutes")
+          // Convert recurrence_time from string to minutes since midnight in UTC
+          const timeString = knownInfo.recurrenceTime || time;
+          
+          // Create a Date object in the user's timezone with the specified time
+          const localTimeDate = new Date(`${date}T${timeString}:00`);
+          
+          // Convert to UTC
+          const utcTimeDate = toUTC(localTimeDate, userTimezone);
+          
+          // Extract hours and minutes in UTC
+          const utcHours = utcTimeDate.getUTCHours();
+          const utcMinutes = utcTimeDate.getUTCMinutes();
+          
+          // Calculate minutes since midnight in UTC
+          const recurrenceTimeMinutes = utcHours * 60 + utcMinutes;
+          
+          console.log(`Converting recurrence time from local (${timeString} ${userTimezone}) to UTC: ${utcHours.toString().padStart(2, '0')}:${utcMinutes.toString().padStart(2, '0')} (${recurrenceTimeMinutes} minutes since midnight)`);
+          
+          // Handle short-term reminders (like "in 2 minutes")
           const now = new Date();
-          const isImmediate = localDate.getTime() - now.getTime() < 5 * 60 * 1000; // Less than 5 minutes from now
+          const timeUntilReminder = localDate.getTime() - now.getTime();
+          const isShortTerm = timeUntilReminder < 5 * 60 * 1000; // Less than 5 minutes from now
           
-          // For immediate reminders, make sure the due_date is set correctly
+          // Check if the reminder is for a past time
+          if (dueDate < now && !isRecurring) {
+            return {
+              success: false,
+              message: "I can't create a reminder for a time that has already passed. Please provide a future date and time."
+            };
+          }
+          
+          // For recurring reminders with a past due date, adjust to the next occurrence
+          if (dueDate < now && isRecurring) {
+            console.log(`Adjusting recurring reminder from past time: ${dueDate.toISOString()}`);
+            
+            // For daily reminders, set to today at the specified time
+            // If that time has already passed today, set to tomorrow
+            if (recurrenceType === 'daily') {
+              const today = new Date();
+              today.setUTCHours(dueDate.getUTCHours(), dueDate.getUTCMinutes(), 0, 0);
+              
+              if (today < now) {
+                // Time has passed today, set to tomorrow
+                today.setDate(today.getDate() + 1);
+              }
+              
+              dueDate = today;
+              console.log(`Adjusted daily reminder to: ${dueDate.toISOString()}`);
+            } 
+            // For weekly reminders, find the next occurrence based on recurrence_days
+            else if (recurrenceType === 'weekly' && recurrenceDays && recurrenceDays.length > 0) {
+              const today = new Date();
+              const currentDayOfWeek = today.getDay(); // 0 = Sunday, 6 = Saturday
+              
+              // Find the next day of week that occurs after today
+              let daysToAdd = 7; // Default to a week if no valid day found
+              for (const day of recurrenceDays) {
+                const diff = (day - currentDayOfWeek + 7) % 7;
+                const nextOccurrence = diff === 0 ? 7 : diff; // If today, use next week
+                if (nextOccurrence < daysToAdd) {
+                  daysToAdd = nextOccurrence;
+                }
+              }
+              
+              const nextDate = new Date();
+              nextDate.setDate(nextDate.getDate() + daysToAdd);
+              nextDate.setUTCHours(dueDate.getUTCHours(), dueDate.getUTCMinutes(), 0, 0);
+              
+              dueDate = nextDate;
+              console.log(`Adjusted weekly reminder to: ${dueDate.toISOString()}`);
+            }
+          }
+          
+          // Always use the calculated due date, even for short-term reminders
           let finalDueDate = dueDate;
           
-          if (isImmediate) {
-            console.log("Detected immediate reminder, setting due_date to current time");
-            // For immediate reminders, set the due_date to the current time
-            // This ensures it will be picked up by the cron job immediately
-            finalDueDate = new Date();
+          if (isShortTerm) {
+            console.log(`Detected short-term reminder (${Math.round(timeUntilReminder/1000)} seconds from now), preserving exact due_date: ${dueDate.toISOString()}`);
+            // We keep the exact due_date to ensure the reminder is triggered at the right time
+          }
+          
+          // Generate a meaningful title if none was provided
+          let reminderTitle = title;
+          if (!reminderTitle || reminderTitle === "Untitled reminder") {
+            // Extract a meaningful title from the notification message
+            if (notification_message) {
+              // Remove common phrases like "Reminder to" or "Don't forget to"
+              const cleanedMessage = notification_message
+                .replace(/^reminder:?\s*/i, '')
+                .replace(/^don't forget:?\s*/i, '')
+                .replace(/^remember:?\s*/i, '')
+                .replace(/^time to:?\s*/i, '')
+                .replace(/^it's time to:?\s*/i, '');
+              
+              // Extract first few words (up to 5) for the title
+              const words = cleanedMessage.split(/\s+/);
+              const titleWords = words.slice(0, 5);
+              reminderTitle = titleWords.join(' ');
+              
+              // Capitalize first letter
+              reminderTitle = reminderTitle.charAt(0).toUpperCase() + reminderTitle.slice(1);
+              
+              console.log(`Generated title from notification message: "${reminderTitle}"`); 
+            } else {
+              // Fallback if no notification message
+              reminderTitle = "Reminder";
+            }
           }
           
           const reminder = await prisma.reminder.create({
             data: {
-              title: title || "Untitled reminder",
+              title: reminderTitle,
               due_date: finalDueDate,
-              description: notification_message || `Reminder: ${title || "Untitled reminder"}`,
+              description: notification_message || `Reminder: ${reminderTitle}`,
               user_id: userId,
               status: "active",
               recurrence_type: recurrenceType,
               recurrence_days: recurrenceDays,
-              recurrence_time: recurrenceTime
+              recurrence_time: recurrenceTimeMinutes
             }
           });
           
-          console.log(`Created reminder with due_date: ${finalDueDate.toISOString()} and recurrence_time: ${recurrenceTime}`);
+          console.log(`Created reminder with due_date: ${finalDueDate.toISOString()} and recurrence_time: ${recurrenceTimeMinutes} minutes (${timeString})`);
           
           // Clear conversation state since we've completed the reminder
           await clearConversationState(userId);
           
-          // Format the confirmation message with the user's timezone using our new utility
-          const userTimeString = formatUTCDate(
-            finalDueDate,
-            userTimezone,
-            'MMMM d, yyyy h:mm a'
-          );
+          // Format the confirmation message with the user's timezone using our date-calculator module
+          const userTimeString = formatDateForDisplay(finalDueDate, userTimezone);
           
           return {
             success: true,
-            message: confirmation_message || `I've set a reminder for "${title || "Untitled reminder"}" on ${userTimeString} (${userTimezone}).`,
+            message: confirmation_message || `I've set a reminder for "${reminderTitle}" on ${userTimeString} (${userTimezone}).`,
             data: {
               ...reminder,
               // Include formatted date for display

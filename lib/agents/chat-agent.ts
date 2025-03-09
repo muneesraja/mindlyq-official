@@ -1,11 +1,9 @@
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+import { HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { Agent, AgentResponse } from "./agent-interface";
 import { getConversationState, updateConversationState } from "../conversation-state";
 import { getUserTimezone } from "../utils/date-converter";
 import { formatUTCDate } from "../utils/date-converter";
-
-// Initialize Google AI
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
+import { genAI, getModelForTask, DEFAULT_SAFETY_SETTINGS } from "../utils/ai-config";
 
 const CHAT_PROMPT = `You are MindlyQ, a friendly and helpful reminder assistant. Your primary purpose is to help users manage their reminders, but you can also engage in casual conversation.
 
@@ -72,27 +70,10 @@ export class ChatAgent implements Agent {
         .replace("{current_time}", formattedTime)
         .replace("{conversation_history}", formattedHistory || "No previous conversation");
       
-      // Generate AI response using Gemini Pro
+      // Generate AI response using the configured model and safety settings for chat interactions
       const model = genAI.getGenerativeModel({ 
-        model: "gemini-2.0-pro-exp",
-        safetySettings: [
-          {
-            category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-          {
-            category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-          {
-            category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-          {
-            category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-            threshold: HarmBlockThreshold.BLOCK_NONE,
-          },
-        ],
+        model: getModelForTask('chat'),
+        safetySettings: DEFAULT_SAFETY_SETTINGS,
       });
       
       const result = await model.generateContent([
