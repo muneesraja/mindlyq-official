@@ -11,31 +11,34 @@ import { FeaturesSection } from "@/components/features-section";
 import { HowItWorksSection } from "@/components/how-it-works-section";
 import { PricingSection } from "@/components/pricing-section";
 import { CTASection } from "@/components/cta-section";
+import AnalyticsProvider from "@/components/analytics/analytics-provider";
 
 export default function Home() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-neutral-1 to-white">
-      <Navbar />
+    <AnalyticsProvider>
+      <div className="min-h-screen bg-gradient-to-b from-neutral-1 to-white">
+        <Navbar />
 
-      {/* Hero Section */}
-      <HeroSection />
+        {/* Hero Section */}
+        <HeroSection />
 
-      {/* Features Section */}
-      <FeaturesSection />
+        {/* Features Section */}
+        <FeaturesSection />
 
-      {/* How MindlyQ Works */}
-      <HowItWorksSection />
+        {/* How MindlyQ Works */}
+        <HowItWorksSection />
 
-      {/* Pricing Section */}
-      <PricingSection />
+        {/* Pricing Section */}
+        <PricingSection />
 
-      {/* FAQ Section */}
-      <FAQSection />
+        {/* FAQ Section */}
+        <FAQSection />
 
-      {/* CTA Section */}
-      <CTASection />
+        {/* CTA Section */}
+        <CTASection />
 
-      <Footer />
-    </div>
+        <Footer />
+      </div>
+    </AnalyticsProvider>
   );
 }

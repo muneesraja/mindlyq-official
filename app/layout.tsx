@@ -3,7 +3,6 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 import TawkToChat from '@/components/tawk-to';
 import Script from 'next/script';
-import OpenReplayTracker from '@/components/analytics/openreplay-tracker';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -197,22 +196,9 @@ export default function RootLayout({
             })
           }}
         />
-        {/* Google Analytics */}
-        <Script 
-          src="https://www.googletagmanager.com/gtag/js?id=G-97N1K65354" 
-          strategy="afterInteractive"
-        />
-        <Script id="google-analytics" strategy="afterInteractive">
-          {`
-            window.dataLayer = window.dataLayer || [];
-            function gtag(){dataLayer.push(arguments);}
-            gtag('js', new Date());
-            gtag('config', 'G-97N1K65354');
-          `}
-        </Script>
+        {/* Analytics scripts moved to AnalyticsProvider component */}
       </head>
       <body className={inter.className}>
-        <OpenReplayTracker />
         {children}
         <TawkToChat />
       </body>
