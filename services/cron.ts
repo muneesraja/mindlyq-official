@@ -447,7 +447,7 @@ export async function processDueReminders(): Promise<{ success: boolean; process
           
           // Create a structured reminder message with bell emoji using the format from the database
           // Include the formatted date in the message for clarity
-          const message = `🔔 Reminder: ${reminder.title}\n\nDue: ${formattedDate} (${userTimezone})\n\n${reminder.description || 'No description provided'}`;
+          const message = `🔔 Reminder: ${reminder.title}\n\n${reminder.description || 'No description provided'}`;
           
           console.log(`Sending reminder to ${phone}: ${message}`);
           

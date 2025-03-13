@@ -6,6 +6,7 @@ import { prisma } from "../db";
 import { getUserTimezone } from "../utils/date-converter";
 import { toUTC, fromUTC, formatUTCDate, timeStringToMinutes } from "../utils/date-converter";
 import { calculateDate, formatDateForDisplay, TimeExpression } from "../utils/date-calculator";
+import { addDays, addHours, addMinutes } from 'date-fns';
 
 /**
  * Directly handles relative time expressions like "in 5 minutes" or "after 2 hours"
@@ -31,16 +32,21 @@ function handleRelativeTimeExpressions(message: string, currentTime: Date): Date
       const amount = parseInt(match[1], 10);
       const unit = match[2].toLowerCase();
       
-      // Clone the current time
-      const futureTime = new Date(currentTime.getTime());
+      // Use date-fns for more accurate time calculations
+      let futureTime: Date;
       
-      // Add the appropriate amount of time
+      // Add the appropriate amount of time using date-fns
       if (unit.startsWith('minute') || unit === 'min' || unit === 'mins') {
-        futureTime.setMinutes(futureTime.getMinutes() + amount);
+        // Import addMinutes from date-calculator to ensure we're using the same utility functions
+        // that are used elsewhere in the codebase
+        futureTime = addMinutes(currentTime, amount);
       } else if (unit.startsWith('hour') || unit === 'hr' || unit === 'hrs') {
-        futureTime.setHours(futureTime.getHours() + amount);
+        futureTime = addHours(currentTime, amount);
       } else if (unit.startsWith('day')) {
-        futureTime.setDate(futureTime.getDate() + amount);
+        futureTime = addDays(currentTime, amount);
+      } else {
+        // Fallback to cloning the current time if no unit matches
+        futureTime = new Date(currentTime.getTime());
       }
       
       console.log(`Detected relative time expression: ${match[0]}, calculated time: ${futureTime.toISOString()}`);
@@ -305,13 +311,16 @@ export class BulkReminderCreationAgent implements Agent {
             }
             
             // First check if this is a relative time expression (like "in 5 minutes")
-            const relativeTime = handleRelativeTimeExpressions(message, new Date());
+            // For each reminder in the bulk creation, we need to extract its specific time expression
+            // from the title or notification_message
+            const reminderText = notification_message || title || '';
+            const relativeTime = handleRelativeTimeExpressions(reminderText, new Date());
             let dueDate: Date;
             
             if (relativeTime) {
-              // Use the directly calculated relative time
+              // Use the directly calculated relative time for this specific reminder
               dueDate = relativeTime;
-              console.log(`Date calculated using relative time expression: ${dueDate.toISOString()}`);
+              console.log(`Date calculated using relative time expression for "${title}": ${dueDate.toISOString()}`);
             } else {
               // Create a TimeExpression for the specific date and time
               const timeExpression: TimeExpression = {

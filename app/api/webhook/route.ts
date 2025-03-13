@@ -93,7 +93,6 @@ export async function POST(req: Request) {
       }
       
       // Add tips
-      formattedMessage += "\n\nTips:";
       formattedOutput.tips.forEach(tip => {
         formattedMessage += `\n• ${tip}`;
       });
@@ -178,7 +177,7 @@ export async function POST(req: Request) {
 
     // Return a proper TwiML response to Twilio
     return new Response(
-      `<?xml version='1.0' encoding='UTF-8'?><Response><Message>Message received and processed successfully.</Message></Response>`,
+      `<?xml version='1.0' encoding='UTF-8'?><Response></Response>`,
       {
         headers: {
           "Content-Type": "application/xml",

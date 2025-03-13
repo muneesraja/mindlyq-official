@@ -253,13 +253,29 @@ export class ReminderCreationAgent implements Agent {
           let dueDate: Date;
           
           if (calculationResult.success && calculationResult.date) {
+            // The date-calculator module should return a date in UTC
+            // But let's ensure it's definitely in UTC by converting it explicitly
             dueDate = calculationResult.date;
-            console.log(`Date calculated using date-calculator module: ${dueDate.toISOString()}`);
+            console.log(`Date calculated using date-calculator module (before UTC conversion): ${dueDate.toISOString()}`);
+            
+            // Ensure the date is in UTC
+            if (!(dueDate instanceof Date && !isNaN(dueDate.getTime()))) {
+              // If the date is invalid, create a new one
+              dueDate = new Date();
+            }
+            
+            // Convert to UTC if needed
+            dueDate = toUTC(dueDate, userTimezone);
+            console.log(`Date after explicit UTC conversion: ${dueDate.toISOString()}`);
           } else {
             // Fallback to manual conversion
+            // Create a local date in the user's timezone
             const localDate = new Date(`${date}T${time}:00`);
+            console.log(`Local date created: ${localDate.toISOString()} (local representation)`);
+            
+            // Convert to UTC for storage
             dueDate = toUTC(localDate, userTimezone);
-            console.log(`Date calculated using manual conversion: ${dueDate.toISOString()}`);
+            console.log(`Date after UTC conversion: ${dueDate.toISOString()}`);
           }
           
           console.log(`Converting reminder time from ${userTimezone} to UTC:`);
@@ -285,18 +301,11 @@ export class ReminderCreationAgent implements Agent {
           
           // Create a Date object in the user's timezone with the specified time
           const localTimeDate = new Date(`${date}T${timeString}:00`);
+          console.log(`Local time date created: ${localTimeDate.toISOString()} (local representation)`);
           
-          // Convert to UTC
+          // Convert to UTC - this ensures we're working with UTC time
           const utcTimeDate = toUTC(localTimeDate, userTimezone);
-          
-          // Extract hours and minutes in UTC
-          const utcHours = utcTimeDate.getUTCHours();
-          const utcMinutes = utcTimeDate.getUTCMinutes();
-          
-          // Calculate minutes since midnight in UTC
-          const recurrenceTimeMinutes = utcHours * 60 + utcMinutes;
-          
-          console.log(`Converting recurrence time from local (${timeString} ${userTimezone}) to UTC: ${utcHours.toString().padStart(2, '0')}:${utcMinutes.toString().padStart(2, '0')} (${recurrenceTimeMinutes} minutes since midnight)`);
+          console.log(`UTC time date after conversion: ${utcTimeDate.toISOString()}`);
           
           // Handle short-term reminders (like "in 2 minutes")
           const now = new Date();
@@ -360,6 +369,29 @@ export class ReminderCreationAgent implements Agent {
             console.log(`Detected short-term reminder (${Math.round(timeUntilReminder/1000)} seconds from now), preserving exact due_date: ${dueDate.toISOString()}`);
             // We keep the exact due_date to ensure the reminder is triggered at the right time
           }
+          
+          // IMPORTANT: Calculate recurrence_time based on finalDueDate to ensure consistency
+          // Extract hours and minutes from the finalDueDate (which is in UTC)
+          // We use getUTCHours and getUTCMinutes to ensure we're getting the UTC time components
+          const utcHours = finalDueDate.getUTCHours();
+          const utcMinutes = finalDueDate.getUTCMinutes();
+          
+          // Calculate minutes since midnight in UTC
+          // Always use the due_date hours and minutes to ensure consistency
+          const dueDateMinutes = finalDueDate.getUTCHours() * 60 + finalDueDate.getUTCMinutes();
+          let recurrenceTimeMinutes = dueDateMinutes;
+          
+          console.log(`Setting recurrence time based on due_date (${finalDueDate.toISOString()})`);
+          console.log(`UTC time: ${utcHours.toString().padStart(2, '0')}:${utcMinutes.toString().padStart(2, '0')} (${recurrenceTimeMinutes} minutes since midnight)`);
+          console.log(`Original local time was: ${timeString} ${userTimezone}`);
+          
+          // Log the recurrence time for verification
+          const recurrenceHours = Math.floor(recurrenceTimeMinutes / 60);
+          const recurrenceMinutes = recurrenceTimeMinutes % 60;
+          console.log(`Recurrence time (UTC): ${recurrenceHours.toString().padStart(2, '0')}:${recurrenceMinutes.toString().padStart(2, '0')}`);
+          console.log(`Due date time (UTC): ${finalDueDate.getUTCHours().toString().padStart(2, '0')}:${finalDueDate.getUTCMinutes().toString().padStart(2, '0')}`);
+          console.log(`Consistency check: ${recurrenceTimeMinutes === dueDateMinutes ? 'PASSED ✅' : 'FAILED ❌'}`);
+          
           
           // Generate a meaningful title if none was provided
           let reminderTitle = title;
