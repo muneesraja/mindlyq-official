@@ -33,6 +33,7 @@ For complete reminder information:
     "title": "Meeting with John", // IMPORTANT: Always create a concise, meaningful title (3-5 words) that summarizes the reminder's purpose. NEVER use generic titles like "Untitled reminder" or "Reminder". Extract key information from the notification message to create a specific, descriptive title.
     "date": "2023-04-15", // YYYY-MM-DD format
     "time": "15:00", // 24-hour format
+    "end_date": "2023-05-15", // Optional, YYYY-MM-DD format. Only for recurring reminders to specify when they should stop.
     "notification_message": "Don't forget your meeting with John!",
     "confirmation_message": "I've set a reminder for your meeting with John at 3:00 PM on April 15, 2023."
   }
@@ -45,9 +46,17 @@ For incomplete reminder information (need more details):
   "data": {
     "title": "Meeting with John",
     "date": "2023-04-15", // may be null if unknown
-    "time": null // null if unknown
+    "time": null, // null if unknown
+    "end_date": null // null if unknown or not applicable
   }
 }
+
+IMPORTANT RULES FOR RECURRING REMINDERS:
+1. When a user specifies an end date for a recurring reminder (e.g., 'until March 22nd'), always set the end_date field
+2. For recurring reminders without a specified end date, leave end_date as null
+3. Include the end date information in the confirmation_message for recurring reminders
+4. All dates must be in YYYY-MM-DD format and use UTC timezone
+5. For relative end dates (e.g., 'for the next 2 weeks'), calculate the exact end date based on the current time
 
 IMPORTANT RULES:
 1. If no title is provided, use "Untitled reminder" as the default
@@ -71,6 +80,7 @@ interface ReminderCreationResponse {
     title?: string;
     date?: string;
     time?: string;
+    end_date?: string;
     notification_message?: string;
     confirmation_message?: string;
   };
@@ -228,7 +238,7 @@ export class ReminderCreationAgent implements Agent {
             };
           }
           
-          const { title, date, time, notification_message, confirmation_message } = parsed.data;
+          const { title, date, time, end_date, notification_message, confirmation_message } = parsed.data;
           
           if (!date || !time) {
             return {
@@ -421,6 +431,17 @@ export class ReminderCreationAgent implements Agent {
             }
           }
           
+          // Parse end_date if provided for recurring reminders
+          let endDateTime: Date | null = null;
+          if (end_date && isRecurring) {
+            // Create end date at the same time as the reminder
+            const endLocalDate = new Date(`${end_date}T${time}:00`);
+            // Convert to UTC for storage
+            endDateTime = toUTC(endLocalDate, userTimezone);
+            console.log(`End date set to (UTC): ${endDateTime.toISOString()}`);
+            console.log(`End date in user timezone (${userTimezone}): ${fromUTC(endDateTime, userTimezone).toLocaleString()}`);
+          }
+
           const reminder = await prisma.reminder.create({
             data: {
               title: reminderTitle,
@@ -430,7 +451,8 @@ export class ReminderCreationAgent implements Agent {
               status: "active",
               recurrence_type: recurrenceType,
               recurrence_days: recurrenceDays,
-              recurrence_time: recurrenceTimeMinutes
+              recurrence_time: recurrenceTimeMinutes,
+              end_date: endDateTime
             }
           });
           
@@ -442,13 +464,34 @@ export class ReminderCreationAgent implements Agent {
           // Format the confirmation message with the user's timezone using our date-calculator module
           const userTimeString = formatDateForDisplay(finalDueDate, userTimezone);
           
+          // Format end date if present
+          let endDateString = '';
+          if (endDateTime) {
+            endDateString = ` until ${formatDateForDisplay(endDateTime, userTimezone)}`;
+          }
+          
+          // Create a recurrence description if this is a recurring reminder
+          let recurrenceDescription = '';
+          if (isRecurring && recurrenceType !== 'none') {
+            // Ensure recurrenceType is one of the valid types
+            const validRecurrenceType = recurrenceType as 'daily' | 'weekly' | 'monthly' | 'yearly';
+            const recurrenceInfo = formatRecurrenceForHumans(
+              validRecurrenceType,
+              recurrenceDays,
+              timeString
+            );
+            recurrenceDescription = ` (${recurrenceInfo}${endDateString})`;
+          }
+          
           return {
             success: true,
-            message: confirmation_message || `I've set a reminder for "${reminderTitle}" on ${userTimeString} (${userTimezone}).`,
+            message: confirmation_message || 
+              `I've set a reminder for "${reminderTitle}" on ${userTimeString}${recurrenceDescription} (${userTimezone})`,
             data: {
               ...reminder,
-              // Include formatted date for display
-              formattedDueDate: userTimeString
+              // Include formatted dates for display
+              formattedDueDate: userTimeString,
+              formattedEndDate: endDateTime ? formatDateForDisplay(endDateTime, userTimezone) : null
             }
           };
         }

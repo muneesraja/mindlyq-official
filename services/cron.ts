@@ -75,6 +75,23 @@ function isTimeMatching(reminderTimeMinutes: number, currentTime: Date): boolean
  */
 async function isReminderDue(reminder: Reminder, currentUTCTime: Date): Promise<boolean> {
   try {
+    // Check if the reminder has reached its end date (for recurring reminders)
+    if (reminder.end_date && reminder.recurrence_type && reminder.recurrence_type !== 'none') {
+      const endDate = new Date(reminder.end_date);
+      // Set end date to end of day in UTC
+      endDate.setUTCHours(23, 59, 59, 999);
+      
+      if (currentUTCTime > endDate) {
+        // Reminder has passed its end date, mark it as complete
+        await prisma.reminder.update({
+          where: { id: reminder.id },
+          data: { status: 'completed' }
+        });
+        console.log(`Reminder ${reminder.id} marked as completed as it reached its end date`);
+        return false;
+      }
+    }
+
     // Check if this reminder was already sent today (for recurring reminders)
     if (reminder.recurrence_type && reminder.recurrence_type !== 'none' && reminder.last_sent) {
       const lastSent = new Date(reminder.last_sent);
@@ -229,6 +246,13 @@ export async function processDueReminders(): Promise<{ success: boolean; process
             AND: [
               { recurrence_type: 'daily' },
               { status: 'active' },
+              // End date check
+              {
+                OR: [
+                  { end_date: null },              // No end date set
+                  { end_date: { gte: now } }        // End date hasn't passed
+                ]
+              },
               // Time window check using integer minutes since midnight
               {
                 OR: [
@@ -256,6 +280,13 @@ export async function processDueReminders(): Promise<{ success: boolean; process
             AND: [
               { recurrence_type: 'weekly' },
               { status: 'active' },
+              // End date check
+              {
+                OR: [
+                  { end_date: null },              // No end date set
+                  { end_date: { gte: now } }        // End date hasn't passed
+                ]
+              },
               // Check that today's day of week is in the recurrence_days array
               { recurrence_days: { has: now.getUTCDay() } },
               // Time window check using integer minutes since midnight
@@ -285,6 +316,13 @@ export async function processDueReminders(): Promise<{ success: boolean; process
             AND: [
               { recurrence_type: 'monthly' },
               { status: 'active' },
+              // End date check
+              {
+                OR: [
+                  { end_date: null },              // No end date set
+                  { end_date: { gte: now } }        // End date hasn't passed
+                ]
+              },
               // Check that today's day of month is in the recurrence_days array
               { recurrence_days: { has: now.getUTCDate() } },
               // Time window check using integer minutes since midnight
@@ -316,6 +354,13 @@ export async function processDueReminders(): Promise<{ success: boolean; process
             AND: [
               { recurrence_type: 'yearly' },
               { status: 'active' },
+              // End date check
+              {
+                OR: [
+                  { end_date: null },              // No end date set
+                  { end_date: { gte: now } }        // End date hasn't passed
+                ]
+              },
               // Time window check using integer minutes since midnight
               {
                 OR: [

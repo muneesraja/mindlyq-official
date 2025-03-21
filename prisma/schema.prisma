@@ -1,11 +1,10 @@
-// This is your Prisma schema file
+generator client {
+  provider = "prisma-client-js"
+}
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-}
-
-generator client {
-  provider = "prisma-client-js"
 }
 
 model Reminder {
@@ -17,10 +16,11 @@ model Reminder {
   status          String    @default("active")
   recurrence_type String?
   recurrence_days Int[]     @default([])
-  recurrence_time Int?
   last_sent       DateTime?
   created_at      DateTime  @default(now())
   updated_at      DateTime  @updatedAt
+  recurrence_time Int?
+  end_date        DateTime?
 }
 
 model ContentItem {
@@ -37,15 +37,15 @@ model ConversationContext {
   userId      String   @unique
   messages    Json[]   @default([])
   partialData Json?
-  expiresAt   DateTime
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  expiresAt   DateTime
 }
 
 model UserPreference {
-  id         String   @id @default(cuid())
-  userId     String   @unique
-  timezone   String   @default("Asia/Kolkata")
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  timezone  String   @default("Asia/Kolkata")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
